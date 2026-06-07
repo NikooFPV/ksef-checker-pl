@@ -39,8 +39,8 @@ Name: "{group}\Odinstaluj";        Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Uruchom aplikację po instalacji (też w trybie cichym /SILENT)
+; Uruchom aplikację tylko przy ręcznej instalacji (nie przy cichej aktualizacji)
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "Uruchom {#MyAppName}"; \
-  Flags: nowait postinstall
+  Flags: nowait postinstall skipifsilent
 

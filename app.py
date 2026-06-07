@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "1.0.5"
+VERSION     = "1.0.6"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -770,9 +770,12 @@ class UpdateDialog(tk.Toplevel):
 
             urllib.request.urlretrieve(self._installer_url, tmp_path, on_progress)
 
-            self.after(0, lambda: self._lbl.config(
-                text="Pobrano! Za chwilę uruchomi się instalator…", fg=OK))
-            self.after(1000, lambda: self._run_installer(tmp_path))
+            self.after(0, lambda: (
+                self._lbl.config(
+                    text="Pobrano! Aplikacja zaraz się zamknie.\nUruchom ją ponownie po zakończeniu instalacji.", fg=OK),
+                self._prog.config(value=100)
+            ))
+            self.after(2000, lambda: self._run_installer(tmp_path))
 
         except Exception as e:
             if not self._cancelled:
@@ -786,7 +789,7 @@ class UpdateDialog(tk.Toplevel):
             f.write(
                 "@echo off\n"
                 "timeout /t 3 /nobreak >nul\n"
-                f'"{path}" /SILENT /NORESTART\n'
+                f'"{path}" /VERYSILENT /NORESTART\n'
                 f'del "{bat}"\n'
             )
         subprocess.Popen(
