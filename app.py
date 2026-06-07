@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "1.0.0"
+VERSION     = "1.0.1"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -208,7 +208,7 @@ class SettingsWindow(tk.Toplevel):
             tk.Label(f, text=f"  ← {tip}", font=FSM,
                      bg=BG, fg=TXT3, anchor="w").pack(side="left")
 
-        # ── bottom save/cancel ────────────────────────────────────────────
+        # ── bottom save/cancel + aktualizacje ────────────────────────────
         bot = tk.Frame(self, bg=BG2, pady=8)
         bot.pack(fill="x", side="bottom")
         tk.Button(bot, text="  Zapisz  ", font=FMED,
@@ -221,6 +221,54 @@ class SettingsWindow(tk.Toplevel):
                   activebackground=BG4, activeforeground=TXT,
                   relief="flat", padx=12, pady=5,
                   command=self.destroy).pack(side="right", padx=4)
+
+        # przycisk sprawdzenia aktualizacji (lewa strona)
+        self._upd_btn = tk.Button(bot, text="🔔  Sprawdź aktualizacje", font=FSM,
+                  bg=BG3, fg=TXT,
+                  activebackground=BG4, activeforeground=TXT,
+                  relief="flat", padx=12, pady=5,
+                  command=self._check_updates_now)
+        self._upd_btn.pack(side="left", padx=12)
+        self._upd_lbl = tk.Label(bot, text="", font=FSM, bg=BG2, fg=TXT2)
+        self._upd_lbl.pack(side="left")
+
+    def _check_updates_now(self):
+        self._upd_btn.config(state="disabled")
+        self._upd_lbl.config(text="Sprawdzam…", fg=TXT2)
+        import threading
+        def worker():
+            import urllib.request, json
+            try:
+                req = urllib.request.Request(GITHUB_API,
+                                             headers={"User-Agent": "KSeF-Checker"})
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    data = json.loads(r.read())
+                tag    = data.get("tag_name", "")
+                dl_url = data.get("html_url", GITHUB_URL)
+                if _ver_tuple(tag) > _ver_tuple(VERSION):
+                    self.after(0, lambda: (
+                        self._upd_lbl.config(
+                            text=f"Dostępna wersja {tag}!", fg=WARN),
+                        self._upd_btn.config(
+                            text="  Pobierz  ", state="normal",
+                            bg=ACCENT, fg="#111111",
+                            command=lambda: webbrowser.open(dl_url))
+                    ))
+                else:
+                    self.after(0, lambda: (
+                        self._upd_lbl.config(
+                            text=f"Masz najnowszą wersję ({VERSION}) ✓", fg=OK),
+                        self._upd_btn.config(state="normal")
+                    ))
+                # wyzeruj datę żeby przy starcie też sprawdzało
+                self._cfg["last_update_check"] = ""
+                cfg_module.save(self._cfg)
+            except Exception:
+                self.after(0, lambda: (
+                    self._upd_lbl.config(text="Brak połączenia z internetem", fg=ERR),
+                    self._upd_btn.config(state="normal")
+                ))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _restore_defaults(self):
         defaults = cfg_module.DEFAULTS["enabled_checks"]
