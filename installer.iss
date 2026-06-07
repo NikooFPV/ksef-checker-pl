@@ -48,10 +48,10 @@ Filename: "{tmp}\{#AccessEngine}"; \
   Check: AccessDriverMissing; \
   Flags: waituntilterminated
 
-; Uruchom aplikację po instalacji
+; Uruchom aplikację po instalacji (też w trybie cichym /SILENT)
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "Uruchom {#MyAppName}"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall
 
 [Code]
 function AccessDriverMissing: Boolean;

@@ -95,7 +95,7 @@ def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None):
 
 # ── settings window ───────────────────────────────────────────────────────────
 class SettingsWindow(tk.Toplevel):
-    def __init__(self, parent, cfg, on_save):
+    def __init__(self, parent, cfg, on_save, app_ref=None):
         super().__init__(parent)
         self.title("Ustawienia — KSeF Checker")
         self.geometry("680x580")
@@ -103,6 +103,7 @@ class SettingsWindow(tk.Toplevel):
         self.resizable(True, True)
         self._cfg = dict(cfg)
         self._on_save = on_save
+        self._app_ref = app_ref
         self._vars = {}
         self._build()
         self.lift(); self.focus_force()
@@ -246,13 +247,25 @@ class SettingsWindow(tk.Toplevel):
                 tag    = data.get("tag_name", "")
                 dl_url = data.get("html_url", GITHUB_URL)
                 if _ver_tuple(tag) > _ver_tuple(VERSION):
+                    # szukaj URL instalatora
+                    inst_url = None
+                    for asset in data.get("assets", []):
+                        if "installer" in asset["name"].lower():
+                            inst_url = asset["browser_download_url"]
+                            break
+                    if not inst_url:
+                        inst_url = dl_url
+                    def _do_update(t=tag, u=inst_url):
+                        self.destroy()
+                        if self._app_ref:
+                            self._app_ref._start_update(t, u)
                     self.after(0, lambda: (
                         self._upd_lbl.config(
                             text=f"Dostępna wersja {tag}!", fg=WARN),
                         self._upd_btn.config(
-                            text="  Pobierz  ", state="normal",
+                            text="  Aktualizuj  ", state="normal",
                             bg=ACCENT, fg="#111111",
-                            command=lambda: webbrowser.open(dl_url))
+                            command=_do_update)
                     ))
                 else:
                     self.after(0, lambda: (
@@ -702,6 +715,80 @@ def _export_batch_excel(results, save_path):
     wb.save(save_path)
 
 
+# ── okno pobierania aktualizacji ─────────────────────────────────────────────
+class UpdateDialog(tk.Toplevel):
+    def __init__(self, parent, app_root, version, installer_url):
+        super().__init__(parent)
+        self.title(f"Aktualizacja do {version}")
+        self.geometry("440x170")
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.grab_set()
+        self._app_root     = app_root
+        self._version      = version
+        self._installer_url = installer_url
+        self._cancelled    = False
+        self._build()
+        self.lift(); self.focus_force()
+        threading.Thread(target=self._download, daemon=True).start()
+
+    def _build(self):
+        tk.Label(self, text=f"Pobieranie KSeF Checker {self._version}",
+                 font=FMED, bg=BG, fg=TXT, pady=14).pack()
+        style = ttk.Style(self)
+        style.configure("U.Horizontal.TProgressbar",
+                        troughcolor=BG3, background=ACCENT,
+                        bordercolor=BG3, lightcolor=ACCENT, darkcolor=ACCENT)
+        self._prog = ttk.Progressbar(self, style="U.Horizontal.TProgressbar",
+                                      length=380, mode="determinate")
+        self._prog.pack(padx=30)
+        self._lbl = tk.Label(self, text="Łączę z serwerem…",
+                             font=FSM, bg=BG, fg=TXT2)
+        self._lbl.pack(pady=10)
+        tk.Button(self, text="Anuluj", font=FSM,
+                  bg=BG3, fg=TXT, activebackground=BG4,
+                  relief="flat", padx=12, pady=4,
+                  command=self._cancel).pack()
+
+    def _download(self):
+        import urllib.request, tempfile
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".exe", delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+
+            def on_progress(count, block, total):
+                if self._cancelled:
+                    raise Exception("Anulowano")
+                if total > 0:
+                    pct  = min(100, count * block * 100 // total)
+                    done = count * block / 1048576
+                    tot  = total / 1048576
+                    self.after(0, lambda p=pct, d=done, t=tot: (
+                        self._prog.config(value=p),
+                        self._lbl.config(text=f"{d:.1f} MB / {t:.1f} MB")))
+
+            urllib.request.urlretrieve(self._installer_url, tmp_path, on_progress)
+
+            self.after(0, lambda: self._lbl.config(
+                text="Pobrano! Za chwilę uruchomi się instalator…", fg=OK))
+            self.after(1000, lambda: self._run_installer(tmp_path))
+
+        except Exception as e:
+            if not self._cancelled:
+                self.after(0, lambda: self._lbl.config(
+                    text=f"Błąd: {e}", fg=ERR))
+
+    def _run_installer(self, path):
+        import subprocess
+        subprocess.Popen([path, "/SILENT", "/NORESTART"])
+        self.after(300, self._app_root.destroy)
+
+    def _cancel(self):
+        self._cancelled = True
+        self.destroy()
+
+
 # ── historia analiz ───────────────────────────────────────────────────────────
 class HistoryWindow(tk.Toplevel):
     def __init__(self, parent, on_load):
@@ -874,20 +961,27 @@ class App(tk.Tk):
                                          headers={"User-Agent": "KSeF-Checker"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())
-            tag     = data.get("tag_name", "")
-            notes   = data.get("body", "")[:300]
-            dl_url  = data.get("html_url", GITHUB_URL)
+            tag   = data.get("tag_name", "")
+            notes = data.get("body", "")[:300]
+            # szukaj URL instalatora w assets
+            installer_url = None
+            for asset in data.get("assets", []):
+                if "installer" in asset["name"].lower():
+                    installer_url = asset["browser_download_url"]
+                    break
+            if not installer_url:
+                installer_url = data.get("html_url", GITHUB_URL)
             if _ver_tuple(tag) > _ver_tuple(VERSION):
-                self.after(0, lambda: self._show_update_banner(tag, notes, dl_url))
+                self.after(0, lambda: self._show_update_banner(
+                    tag, notes, installer_url))
             self._cfg["last_update_check"] = today
             cfg_module.save(self._cfg)
         except Exception:
             pass
 
-    def _show_update_banner(self, tag, notes, url):
+    def _show_update_banner(self, tag, notes, installer_url):
         banner = tk.Frame(self, bg="#2b1a00", pady=0)
         banner.pack(fill="x", before=self._nb)
-        # lewa część
         left = tk.Frame(banner, bg="#2b1a00")
         left.pack(side="left", fill="x", expand=True, padx=12, pady=6)
         tk.Label(left, text=f"🔔  Dostępna nowa wersja  {tag}",
@@ -896,12 +990,11 @@ class App(tk.Tk):
             short = notes.split("\n")[0][:80]
             tk.Label(left, text=f"  —  {short}",
                      font=FSM, bg="#2b1a00", fg=TXT2).pack(side="left", padx=6)
-        # przyciski
-        tk.Button(banner, text="  Pobierz  ", font=FSM,
+        tk.Button(banner, text="  Aktualizuj  ", font=FSM,
                   bg=ACCENT, fg="#111111",
                   activebackground="#ea7522", activeforeground="#111111",
                   relief="flat", padx=10, pady=4,
-                  command=lambda: webbrowser.open(url)).pack(
+                  command=lambda: self._start_update(tag, installer_url, banner)).pack(
                   side="right", padx=4, pady=6)
         tk.Button(banner, text="✕", font=FSM,
                   bg="#2b1a00", fg=TXT3,
@@ -909,6 +1002,11 @@ class App(tk.Tk):
                   relief="flat", padx=8, pady=4,
                   command=banner.destroy).pack(
                   side="right", padx=(0,4), pady=6)
+
+    def _start_update(self, tag, installer_url, banner=None):
+        if banner:
+            banner.destroy()
+        UpdateDialog(self, self, tag, installer_url)
 
     # ── layout ────────────────────────────────────────────────────────────
     def _build(self):
@@ -1129,7 +1227,7 @@ class App(tk.Tk):
             activeforeground="#111111" if is_month else TXT)
 
     def _open_settings(self):
-        SettingsWindow(self, self._cfg, self._on_settings_saved)
+        SettingsWindow(self, self._cfg, self._on_settings_saved, app_ref=self)
 
     def _on_settings_saved(self, new_cfg):
         self._cfg = new_cfg
