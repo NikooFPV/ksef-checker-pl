@@ -32,8 +32,6 @@ Name: "desktopicon"; Description: "Utwórz skrót na pulpicie"; GroupDescription
 ; Główna aplikacja
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; Sterownik Microsoft Access — instalowany tylko gdy brak
-Source: "{#AccessEngine}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\{#MyAppName}";      Filename: "{app}\{#MyAppExeName}"
@@ -41,37 +39,8 @@ Name: "{group}\Odinstaluj";        Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Zainstaluj Access Engine cicho jeśli sterownik jeszcze nie istnieje
-Filename: "{tmp}\{#AccessEngine}"; \
-  Parameters: "/quiet /norestart"; \
-  StatusMsg: "Instaluję sterownik Microsoft Access..."; \
-  Check: AccessDriverMissing; \
-  Flags: waituntilterminated
-
 ; Uruchom aplikację po instalacji (też w trybie cichym /SILENT)
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "Uruchom {#MyAppName}"; \
   Flags: nowait postinstall
 
-[Code]
-function AccessDriverMissing: Boolean;
-var
-  KeyExists: Boolean;
-begin
-  // Sprawdź czy sterownik Access 64-bit jest już zainstalowany
-  KeyExists := RegKeyExists(
-    HKEY_LOCAL_MACHINE,
-    'SOFTWARE\Microsoft\Office\16.0\Access Connectivity Engine\Engines\ACE'
-  );
-  if not KeyExists then
-    KeyExists := RegKeyExists(
-      HKEY_LOCAL_MACHINE,
-      'SOFTWARE\Microsoft\Office\15.0\Access Connectivity Engine\Engines\ACE'
-    );
-  if not KeyExists then
-    KeyExists := RegKeyExists(
-      HKEY_LOCAL_MACHINE,
-      'SOFTWARE\Microsoft\Office\14.0\Access Connectivity Engine\Engines\ACE'
-    );
-  Result := not KeyExists;
-end;
