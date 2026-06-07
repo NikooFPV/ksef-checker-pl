@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "1.0.4"
+VERSION     = "1.0.5"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -780,23 +780,24 @@ class UpdateDialog(tk.Toplevel):
                     text=f"Błąd: {e}", fg=ERR))
 
     def _run_installer(self, path):
-        import subprocess, tempfile
-        # BAT czeka aż stara wersja całkowicie się zamknie (i wyczyści temp PyInstallera)
-        # zanim odpali installer — inaczej nowy EXE nie znajdzie python DLL
+        import subprocess, tempfile, time
         bat = os.path.join(tempfile.gettempdir(), "ksef_update.bat")
         with open(bat, "w", encoding="utf-8") as f:
             f.write(
                 "@echo off\n"
-                "timeout /t 4 /nobreak >nul\n"
+                "timeout /t 3 /nobreak >nul\n"
                 f'"{path}" /SILENT /NORESTART\n'
                 f'del "{bat}"\n'
             )
         subprocess.Popen(
-            ["cmd", "/c", "start", "/min", "", bat],
-            creationflags=subprocess.CREATE_NO_WINDOW
+            ["cmd", "/c", bat],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+            close_fds=True
         )
-        # zamknij aplikację — bat odpali installer za 4 sekundy
-        self.after(300, self._app_root.destroy)
+        # os._exit omija atexit PyInstallera — temp folder NIE jest usuwany
+        # dzięki temu nowy proces nie dostaje błędu "DLL not found"
+        time.sleep(0.3)
+        os._exit(0)
 
     def _cancel(self):
         self._cancelled = True
