@@ -5,6 +5,46 @@ Zwraca dict: kind, title, detail, rows, explanation.
 """
 import pandas as pd
 
+# ── kurs NBP ──────────────────────────────────────────────────────────────────
+_nbp_cache: dict = {}   # (waluta, data) -> kurs środkowy
+
+def get_nbp_rate(currency: str, issue_date) -> float | None:
+    """
+    Kurs średni NBP z ostatniego dnia roboczego PRZED datą wystawienia.
+    Zgodnie z art. 31a ustawy o VAT: kurs z ostatniego dnia roboczego
+    poprzedzającego dzień powstania obowiązku podatkowego.
+    Zwraca None gdy kurs niedostępny (brak sieci / waluta nieznana).
+    """
+    import urllib.request, json, ssl, datetime as dt
+
+    if pd.isna(issue_date): return None
+    currency = str(currency).strip().upper()
+    if currency in ("PLN", "", "NAN"): return 1.0
+
+    base = pd.Timestamp(issue_date).date() - dt.timedelta(days=1)
+
+    for offset in range(7):          # cofaj max 7 dni (weekendy, święta)
+        d = base - dt.timedelta(days=offset)
+        key = (currency, d.isoformat())
+        if key in _nbp_cache:
+            return _nbp_cache[key]
+        url = (f"https://api.nbp.pl/api/exchangerates/rates/A/"
+               f"{currency}/{d.isoformat()}/?format=json")
+        try:
+            try:
+                with urllib.request.urlopen(url, timeout=4) as r:
+                    data = json.loads(r.read())
+            except ssl.SSLError:
+                ctx = ssl._create_unverified_context()
+                with urllib.request.urlopen(url, timeout=4, context=ctx) as r:
+                    data = json.loads(r.read())
+            rate = float(data["rates"][0]["mid"])
+            _nbp_cache[key] = rate
+            return rate
+        except Exception:
+            continue
+    return None
+
 MONTHS_PL = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec",
              "Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"]
 
@@ -253,6 +293,33 @@ def check_partial_booking(d, cfg=None):
                " | ".join(parts), rows=rows,
                explanation="Faktura powinna być jednocześnie w KSIEGA i VATZAKUPY. Brak w jednym miejscu = niekompletne zaksięgowanie.")
 
+def _apply_nbp_conversion(m, amount_cols, date_col="ISSUE_DATE"):
+    """
+    Dla faktur walutowych (CURRENCY_IDENTIFIER ≠ PLN) przelicza kolumny
+    amount_cols na PLN wg kursu NBP z dnia poprzedzającego datę wystawienia.
+    Zwraca df z dodaną kolumną _nbp_rate (1.0 dla PLN, None gdy kurs niedostępny).
+    """
+    if "CURRENCY_IDENTIFIER" not in m.columns:
+        m["_nbp_rate"] = 1.0
+        return m
+    m = m.copy()
+    m["_nbp_rate"] = 1.0
+    foreign = m["CURRENCY_IDENTIFIER"].str.strip().str.upper() != "PLN"
+    if not foreign.any():
+        return m
+    for idx, row in m[foreign].iterrows():
+        rate = get_nbp_rate(row["CURRENCY_IDENTIFIER"], row[date_col])
+        m.at[idx, "_nbp_rate"] = rate if rate else None
+    # pomiń faktury gdzie kurs niedostępny (brak sieci itp.)
+    m = m[m["_nbp_rate"].notna()].copy()
+    foreign2 = m["CURRENCY_IDENTIFIER"].str.strip().str.upper() != "PLN"
+    for col in amount_cols:
+        if col in m.columns:
+            m.loc[foreign2, col] = (
+                m.loc[foreign2, col] * m.loc[foreign2, "_nbp_rate"]).round(2)
+    return m
+
+
 def check_amounts_vs_vat(d, cfg=None):
     tol = d["tol"]
     booked = set(d["ksef_zak"]["KSEF_NUMBER"].dropna()) & d["all_ksiega_ksef"] & d["all_vat_ksef"]
@@ -262,6 +329,8 @@ def check_amounts_vs_vat(d, cfg=None):
     vat_b  = d["vat"][d["vat"]["KSEF"].isin(booked)][
         ["KSEF","WARTOSC_BRUTTO","_netto","_vat","ZAKUP50"]].copy()
     m = ksef_b.merge(vat_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
+    # przelicz faktury walutowe na PLN wg kursu NBP
+    m = _apply_nbp_conversion(m, ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"])
     m["ZAKUP50"] = pd.to_numeric(m["ZAKUP50"], errors="coerce").fillna(0)
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["WARTOSC_BRUTTO"]).round(2)
     m["Δ_netto"]  = (m["NET_AMOUNT"]   - m["_netto"]).round(2)
@@ -345,6 +414,21 @@ def check_sales_amounts(d, cfg=None):
     vsp_b  = d["vatsp"][d["vatsp"]["KSEF"].isin(booked)][
         ["KSEF","SPRZEDAZ_BRUTTO","_netto","_vat"]].copy()
     m = ksef_b.merge(vsp_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
+
+    # przelicz faktury walutowe (WDT itp.) na PLN wg kursu NBP
+    date_col = "INVOICING_DATE" if "INVOICING_DATE" in m.columns else "ISSUE_DATE"
+    m = _apply_nbp_conversion(m, ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"],
+                               date_col=date_col)
+
+    # WDT / eksport 0%: rejestr może mieć netto=0 ale brutto=PLN (poprawne)
+    # → gdy VAT_KSeF=0 i _netto=0 ale SPRZEDAZ_BRUTTO>0: traktuj brutto jako netto
+    wdt_ok = (
+        (m["VAT_AMOUNT"].abs() < tol) &
+        (m["_netto"].abs() < tol) &
+        (m["SPRZEDAZ_BRUTTO"].abs() > tol)
+    )
+    m.loc[wdt_ok, "_netto"] = m.loc[wdt_ok, "SPRZEDAZ_BRUTTO"]
+
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["SPRZEDAZ_BRUTTO"]).round(2)
     m["Δ_netto"]  = (m["NET_AMOUNT"]   - m["_netto"]).round(2)
     m["Δ_vat"]    = (m["VAT_AMOUNT"]   - m["_vat"]).round(2)
