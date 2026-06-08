@@ -5,46 +5,6 @@ Zwraca dict: kind, title, detail, rows, explanation.
 """
 import pandas as pd
 
-# ── kurs NBP ──────────────────────────────────────────────────────────────────
-_nbp_cache: dict = {}   # (waluta, data) -> kurs środkowy
-
-def get_nbp_rate(currency: str, issue_date) -> float | None:
-    """
-    Kurs średni NBP z ostatniego dnia roboczego PRZED datą wystawienia.
-    Zgodnie z art. 31a ustawy o VAT: kurs z ostatniego dnia roboczego
-    poprzedzającego dzień powstania obowiązku podatkowego.
-    Zwraca None gdy kurs niedostępny (brak sieci / waluta nieznana).
-    """
-    import urllib.request, json, ssl, datetime as dt
-
-    if pd.isna(issue_date): return None
-    currency = str(currency).strip().upper()
-    if currency in ("PLN", "", "NAN"): return 1.0
-
-    base = pd.Timestamp(issue_date).date() - dt.timedelta(days=1)
-
-    for offset in range(7):          # cofaj max 7 dni (weekendy, święta)
-        d = base - dt.timedelta(days=offset)
-        key = (currency, d.isoformat())
-        if key in _nbp_cache:
-            return _nbp_cache[key]
-        url = (f"https://api.nbp.pl/api/exchangerates/rates/A/"
-               f"{currency}/{d.isoformat()}/?format=json")
-        try:
-            try:
-                with urllib.request.urlopen(url, timeout=4) as r:
-                    data = json.loads(r.read())
-            except ssl.SSLError:
-                ctx = ssl._create_unverified_context()
-                with urllib.request.urlopen(url, timeout=4, context=ctx) as r:
-                    data = json.loads(r.read())
-            rate = float(data["rates"][0]["mid"])
-            _nbp_cache[key] = rate
-            return rate
-        except Exception:
-            continue
-    return None
-
 MONTHS_PL = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec",
              "Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"]
 
@@ -282,9 +242,11 @@ def check_partial_booking(d, cfg=None):
             if len(r):
                 ri = r.iloc[0]
                 rows.append({"Nr faktury":str(ri["INVOICE_NUMBER"]),
-                             "Data":str(ri["ISSUE_DATE"])[:10],
+                             "Data wyst.":str(ri["ISSUE_DATE"])[:10],
                              "Sprzedawca":str(ri["SELLER_NAME"]),
-                             "Brutto":fmt(ri["GROSS_AMOUNT"]),
+                             "Netto (KSeF)":fmt(ri["NET_AMOUNT"]),
+                             "VAT (KSeF)":fmt(ri["VAT_AMOUNT"]),
+                             "Brutto (KSeF)":fmt(ri["GROSS_AMOUNT"]),
                              "Problem":problem})
     parts = []
     if w_k: parts.append(f"W KSIEGA bez VAT: {len(w_k)}")
@@ -292,33 +254,6 @@ def check_partial_booking(d, cfg=None):
     return err(f"Niespójność KSIEGA ↔ VATZAKUPY: {len(rows)} faktur",
                " | ".join(parts), rows=rows,
                explanation="Faktura powinna być jednocześnie w KSIEGA i VATZAKUPY. Brak w jednym miejscu = niekompletne zaksięgowanie.")
-
-def _apply_nbp_conversion(m, amount_cols, date_col="ISSUE_DATE"):
-    """
-    Dla faktur walutowych (CURRENCY_IDENTIFIER ≠ PLN) przelicza kolumny
-    amount_cols na PLN wg kursu NBP z dnia poprzedzającego datę wystawienia.
-    Zwraca df z dodaną kolumną _nbp_rate (1.0 dla PLN, None gdy kurs niedostępny).
-    """
-    if "CURRENCY_IDENTIFIER" not in m.columns:
-        m["_nbp_rate"] = 1.0
-        return m
-    m = m.copy()
-    m["_nbp_rate"] = 1.0
-    foreign = m["CURRENCY_IDENTIFIER"].str.strip().str.upper() != "PLN"
-    if not foreign.any():
-        return m
-    for idx, row in m[foreign].iterrows():
-        rate = get_nbp_rate(row["CURRENCY_IDENTIFIER"], row[date_col])
-        m.at[idx, "_nbp_rate"] = rate if rate else None
-    # pomiń faktury gdzie kurs niedostępny (brak sieci itp.)
-    m = m[m["_nbp_rate"].notna()].copy()
-    foreign2 = m["CURRENCY_IDENTIFIER"].str.strip().str.upper() != "PLN"
-    for col in amount_cols:
-        if col in m.columns:
-            m.loc[foreign2, col] = (
-                m.loc[foreign2, col] * m.loc[foreign2, "_nbp_rate"]).round(2)
-    return m
-
 
 def check_amounts_vs_vat(d, cfg=None):
     tol = d["tol"]
@@ -329,8 +264,6 @@ def check_amounts_vs_vat(d, cfg=None):
     vat_b  = d["vat"][d["vat"]["KSEF"].isin(booked)][
         ["KSEF","WARTOSC_BRUTTO","_netto","_vat","ZAKUP50"]].copy()
     m = ksef_b.merge(vat_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
-    # przelicz faktury walutowe na PLN wg kursu NBP
-    m = _apply_nbp_conversion(m, ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"])
     m["ZAKUP50"] = pd.to_numeric(m["ZAKUP50"], errors="coerce").fillna(0)
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["WARTOSC_BRUTTO"]).round(2)
     m["Δ_netto"]  = (m["NET_AMOUNT"]   - m["_netto"]).round(2)
@@ -414,21 +347,6 @@ def check_sales_amounts(d, cfg=None):
     vsp_b  = d["vatsp"][d["vatsp"]["KSEF"].isin(booked)][
         ["KSEF","SPRZEDAZ_BRUTTO","_netto","_vat"]].copy()
     m = ksef_b.merge(vsp_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
-
-    # przelicz faktury walutowe (WDT itp.) na PLN wg kursu NBP
-    date_col = "INVOICING_DATE" if "INVOICING_DATE" in m.columns else "ISSUE_DATE"
-    m = _apply_nbp_conversion(m, ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"],
-                               date_col=date_col)
-
-    # WDT / eksport 0%: rejestr może mieć netto=0 ale brutto=PLN (poprawne)
-    # → gdy VAT_KSeF=0 i _netto=0 ale SPRZEDAZ_BRUTTO>0: traktuj brutto jako netto
-    wdt_ok = (
-        (m["VAT_AMOUNT"].abs() < tol) &
-        (m["_netto"].abs() < tol) &
-        (m["SPRZEDAZ_BRUTTO"].abs() > tol)
-    )
-    m.loc[wdt_ok, "_netto"] = m.loc[wdt_ok, "SPRZEDAZ_BRUTTO"]
-
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["SPRZEDAZ_BRUTTO"]).round(2)
     m["Δ_netto"]  = (m["NET_AMOUNT"]   - m["_netto"]).round(2)
     m["Δ_vat"]    = (m["VAT_AMOUNT"]   - m["_vat"]).round(2)
@@ -481,14 +399,19 @@ def check_date_shift_purchases(d, cfg=None):
                   f"Wszystkie zakupy ujęte w {MONTHS_PL[m-1]} {y}.",
                   "Daty wystawienia i ujęcia VAT zgodne z wybranym miesiącem.")
     merged = d["ksef_zak"].merge(
-        wrong[["KSEF","DATA_UJECIA"]], left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
+        wrong[["KSEF","DATA_UJECIA","_netto","_vat","WARTOSC_BRUTTO"]],
+        left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
     merged["Miesiąc KSeF"]    = merged["ISSUE_DATE"].dt.strftime("%m.%Y")
     merged["Miesiąc rejestr"] = merged["DATA_UJECIA"].dt.strftime("%m.%Y")
-    df = merged[["INVOICE_NUMBER","SELLER_NAME","Miesiąc KSeF","Miesiąc rejestr","GROSS_AMOUNT"]].copy()
+    df = merged[["INVOICE_NUMBER","SELLER_NAME","Miesiąc KSeF","Miesiąc rejestr",
+                 "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT",
+                 "_netto","_vat","WARTOSC_BRUTTO"]].copy()
     return warn(f"Zakupy w złym miesiącu w VATZAKUPY: {len(df)}",
                 f"Data wystawienia: {MONTHS_PL[m-1]} {y} → data ujęcia VAT różna",
                 rows=rows_to_dicts(df.rename(columns={
-                    "INVOICE_NUMBER":"Nr faktury","SELLER_NAME":"Sprzedawca","GROSS_AMOUNT":"Brutto"})),
+                    "INVOICE_NUMBER":"Nr faktury","SELLER_NAME":"Sprzedawca",
+                    "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)",
+                    "_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)","WARTOSC_BRUTTO":"Brutto (VAT rej.)"})),
                 explanation="Zakupy powinny być ujmowane wg daty wystawienia. Faktura wpadła do innego miesiąca w rejestrze VAT.")
 
 def check_date_shift_sales(d, cfg=None):
@@ -505,15 +428,20 @@ def check_date_shift_sales(d, cfg=None):
                   f"Wszystkie faktury sprzedaży ujęte w {MONTHS_PL[m-1]} {y}.",
                   "Daty sprzedaży zgodne z wybranym miesiącem.")
     merged = d["ksef_spr"].merge(
-        wrong[["KSEF","_sp"]], left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
+        wrong[["KSEF","_sp","_netto","_vat","SPRZEDAZ_BRUTTO"]],
+        left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
     sd = merged["INVOICING_DATE"].fillna(merged["ISSUE_DATE"])
     merged["Miesiąc KSeF"]    = sd.dt.strftime("%m.%Y")
     merged["Miesiąc rejestr"] = merged["_sp"].dt.strftime("%m.%Y")
-    df = merged[["INVOICE_NUMBER","BUYER_NAME","Miesiąc KSeF","Miesiąc rejestr","GROSS_AMOUNT"]].copy()
+    df = merged[["INVOICE_NUMBER","BUYER_NAME","Miesiąc KSeF","Miesiąc rejestr",
+                 "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT",
+                 "_netto","_vat","SPRZEDAZ_BRUTTO"]].copy()
     return warn(f"Sprzedaż w złym miesiącu w VATSPRZEDAZ: {len(df)}",
                 f"Data sprzedaży: {MONTHS_PL[m-1]} {y} → data w rejestrze różna",
                 rows=rows_to_dicts(df.rename(columns={
-                    "INVOICE_NUMBER":"Nr faktury","BUYER_NAME":"Nabywca","GROSS_AMOUNT":"Brutto"})),
+                    "INVOICE_NUMBER":"Nr faktury","BUYER_NAME":"Nabywca",
+                    "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)",
+                    "_netto":"Netto (rej. sp.)","_vat":"VAT (rej. sp.)","SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)"})),
                 explanation="Sprzedaż ujmujemy wg daty sprzedaży. Faktura wpadła do innego miesiąca.")
 
 def check_no_ksef_number(d, cfg=None):
@@ -521,9 +449,10 @@ def check_no_ksef_number(d, cfg=None):
     bez = vat[vat["KSEF"].isna()|(vat["KSEF"].str.strip()=="")]
     pct = len(bez)/len(vat)*100 if len(vat) else 0
     thr = d["ksef_no_thr"]
-    sample = bez[["NUMER","DATA_WYSTAWIENIA","FIRMA","WARTOSC_BRUTTO"]].head(100).copy()
+    sample = bez[["NUMER","DATA_WYSTAWIENIA","FIRMA","_netto","_vat","WARTOSC_BRUTTO"]].head(100).copy()
     rows = rows_to_dicts(sample.rename(columns={
-        "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data","FIRMA":"Kontrahent","WARTOSC_BRUTTO":"Brutto"}))
+        "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data wyst.","FIRMA":"Kontrahent",
+        "_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)","WARTOSC_BRUTTO":"Brutto (VAT rej.)"}))
     kind = "warning" if pct > thr else "ok"
     return dict(kind=kind,
         title=f"Zakupy bez numeru KSeF: {len(bez)} ({pct:.1f}%)",
@@ -547,6 +476,9 @@ def check_ksiega_only(d, cfg=None):
     for c in ["ZAKUP","ZAKUP_KOSZTY","WYDATKI","WYNAGRODZENIA","RAZEM_WYDATKI"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
+    kwota_cols = [c for c in ["ZAKUP","ZAKUP_KOSZTY","WYDATKI","WYNAGRODZENIA"] if c in df.columns]
+    if kwota_cols:
+        df["Kwota w KSIEGA"] = df[kwota_cols].sum(axis=1).round(2)
     total = df["RAZEM_WYDATKI"].sum() if "RAZEM_WYDATKI" in df.columns else 0
     return warn(f"Wpisy tylko w KSIEGA (bez rejestru VAT): {len(tylko)}",
                 f"Łącznie: {total:,.2f} zł  |  Opłaty bankowe, ZUS, wynagrodzenia itp.",
@@ -561,12 +493,13 @@ def check_duplicates_vat(d, cfg=None):
         return ok("Duplikaty w VATZAKUPY: brak",
                   "Każdy numer KSeF występuje dokładnie raz.",
                   "Brak zduplikowanych faktur w rejestrze VAT zakupów.")
-    df = dups[["NUMER","DATA_WYSTAWIENIA","FIRMA","WARTOSC_BRUTTO","KSEF"]].sort_values("KSEF")
+    df = dups[["NUMER","DATA_WYSTAWIENIA","FIRMA","_netto","_vat","WARTOSC_BRUTTO","KSEF"]].sort_values("KSEF")
     return err(f"Duplikaty w VATZAKUPY: {len(dups)} wpisów ({dups['KSEF'].nunique()} faktur)",
                "Ten sam numer KSeF zaksięgowany więcej niż raz.",
                rows=rows_to_dicts(df.rename(columns={
-                   "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data",
-                   "FIRMA":"Kontrahent","WARTOSC_BRUTTO":"Brutto","KSEF":"Nr KSeF"})),
+                   "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data wyst.",
+                   "FIRMA":"Kontrahent","_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)",
+                   "WARTOSC_BRUTTO":"Brutto (VAT rej.)","KSEF":"Nr KSeF"})),
                explanation="Duplikat w VATZAKUPY zawyży odliczony VAT i spowoduje błąd w JPK_VAT.")
 
 def check_duplicates_vatsp(d, cfg=None):
@@ -577,12 +510,13 @@ def check_duplicates_vatsp(d, cfg=None):
         return ok("Duplikaty w VATSPRZEDAZ: brak",
                   "Każdy numer KSeF sprzedaży występuje dokładnie raz.",
                   "Brak zduplikowanych faktur w rejestrze VAT sprzedaży.")
-    df = dups[["NUMER","DATA_WYSTAWIENIA","FIRMA","SPRZEDAZ_BRUTTO","KSEF"]].copy()
+    df = dups[["NUMER","DATA_WYSTAWIENIA","FIRMA","_netto","_vat","SPRZEDAZ_BRUTTO","KSEF"]].copy()
     return err(f"Duplikaty w VATSPRZEDAZ: {len(dups)} wpisów",
                "Ten sam numer KSeF sprzedaży zaksięgowany więcej niż raz.",
                rows=rows_to_dicts(df.rename(columns={
-                   "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data",
-                   "FIRMA":"Kontrahent","SPRZEDAZ_BRUTTO":"Brutto","KSEF":"Nr KSeF"})),
+                   "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data wyst.",
+                   "FIRMA":"Kontrahent","_netto":"Netto (rej. sp.)","_vat":"VAT (rej. sp.)",
+                   "SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)","KSEF":"Nr KSeF"})),
                explanation="Duplikat w VATSPRZEDAZ zawyży VAT należny i przychód.")
 
 def check_corrections_purchases(d, cfg=None):
@@ -600,9 +534,9 @@ def check_corrections_purchases(d, cfg=None):
     return err(f"Niezaksięgowane korekty zakupów: {len(niezaks)}",
                f"Suma: {niezaks['GROSS_AMOUNT'].sum():,.2f} zł",
                rows=rows_to_dicts(df.rename(columns={
-                   "INVOICE_NUMBER":"Nr faktury","ISSUE_DATE":"Data",
-                   "SELLER_NAME":"Sprzedawca","NET_AMOUNT":"Netto",
-                   "VAT_AMOUNT":"VAT","GROSS_AMOUNT":"Brutto"})),
+                   "INVOICE_NUMBER":"Nr faktury","ISSUE_DATE":"Data wyst.",
+                   "SELLER_NAME":"Sprzedawca","NET_AMOUNT":"Netto (KSeF)",
+                   "VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)"})),
                explanation="Faktury korygujące (ujemne) z KSeF nie zostały zaksięgowane. Zawyżają odliczony VAT i koszty.")
 
 def check_corrections_sales(d, cfg=None):
@@ -623,9 +557,9 @@ def check_corrections_sales(d, cfg=None):
     return err(f"Niezaksięgowane korekty sprzedaży: {len(niezaks)}",
                f"Suma: {niezaks['GROSS_AMOUNT'].sum():,.2f} zł",
                rows=rows_to_dicts(df.rename(columns={
-                   "INVOICE_NUMBER":"Nr faktury","ISSUE_DATE":"Data",
-                   "BUYER_NAME":"Nabywca","NET_AMOUNT":"Netto",
-                   "VAT_AMOUNT":"VAT","GROSS_AMOUNT":"Brutto"})),
+                   "INVOICE_NUMBER":"Nr faktury","ISSUE_DATE":"Data wyst.",
+                   "BUYER_NAME":"Nabywca","NET_AMOUNT":"Netto (KSeF)",
+                   "VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)"})),
                explanation="Faktury korygujące sprzedaż nie zostały zaksięgowane. Zawyżają VAT należny i przychód.")
 
 def check_nip_mismatch(d, cfg=None):
@@ -662,7 +596,8 @@ def check_vat_deadline(d, cfg=None):
                   "Brak faktur ujętych po upływie 90 dni od wystawienia.",
                   "Wszystkie faktury ujęto w rejestrze w terminie ustawowym.")
     late["Dni opóźnienia"] = late["_gap"].astype(int)
-    df = late[["NUMER","DATA_WYSTAWIENIA","DATA_UJECIA","FIRMA","WARTOSC_BRUTTO","Dni opóźnienia"]].copy()
+    df = late[["NUMER","DATA_WYSTAWIENIA","DATA_UJECIA","FIRMA",
+               "_netto","_vat","WARTOSC_BRUTTO","Dni opóźnienia"]].copy()
     df["DATA_WYSTAWIENIA"] = df["DATA_WYSTAWIENIA"].astype(str).str[:10]
     df["DATA_UJECIA"]      = df["DATA_UJECIA"].astype(str).str[:10]
     total_vat = late["_vat"].sum() if "_vat" in late.columns else 0
@@ -670,7 +605,9 @@ def check_vat_deadline(d, cfg=None):
                f"Ryzyko utraty prawa do odliczenia. Kwota VAT: {total_vat:,.2f} zł",
                rows=rows_to_dicts(df.rename(columns={
                    "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data wyst.",
-                   "DATA_UJECIA":"Data ujęcia","FIRMA":"Kontrahent","WARTOSC_BRUTTO":"Brutto"})),
+                   "DATA_UJECIA":"Data ujęcia","FIRMA":"Kontrahent",
+                   "_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)",
+                   "WARTOSC_BRUTTO":"Brutto (VAT rej.)"})),
                explanation="Art. 86 ust. 11 ustawy o VAT: prawo do odliczenia w okresie wystawienia lub 3 kolejnych miesiącach. Przekroczenie = utrata prawa lub konieczność korekty.")
 
 def check_split_payment(d, cfg=None):

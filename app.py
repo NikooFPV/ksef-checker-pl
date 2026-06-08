@@ -34,6 +34,7 @@ THEMES = {
         "BORDER":"#2e2e38","BG_HOVER":"#25252f",
         "TXT":"#fafafa","TXT2":"#a1a1aa","TXT3":"#52525b",
         "CARD_ERR":"#231010","CARD_WARN":"#251d08",
+        "MARKED":"#1a2e1e","MARKED_FG":"#86efac",
         "THEME_ICON":"☀️","THEME_LABEL":"Jasny",
     },
     "light": {
@@ -41,6 +42,7 @@ THEMES = {
         "BORDER":"#d0d7de","BG_HOVER":"#eaeef2",
         "TXT":"#24292f","TXT2":"#57606a","TXT3":"#8c959f",
         "CARD_ERR":"#fff1f2","CARD_WARN":"#fffbeb",
+        "MARKED":"#e6f4ea","MARKED_FG":"#1a6e3a",
         "THEME_ICON":"🌙","THEME_LABEL":"Ciemny",
     },
 }
@@ -51,15 +53,17 @@ ACCENT= "#f97316"; A2  = "#22c55e"; WARN= "#eab308"; ERR = "#ef4444"
 OK    = "#22c55e"; TXT = "#fafafa"; TXT2= "#a1a1aa"; TXT3= "#52525b"
 BORDER= "#2e2e38"; BG_HOVER = "#25252f"
 CARD_ERR = "#231010"; CARD_WARN = "#251d08"
+MARKED = "#1a2e1e"; MARKED_FG = "#86efac"
 
 def apply_theme(name: str):
     """Zaktualizuj globalne zmienne kolorów wg wybranego motywu."""
-    global BG,BG2,BG3,BG4,BORDER,BG_HOVER,TXT,TXT2,TXT3,CARD_ERR,CARD_WARN
+    global BG,BG2,BG3,BG4,BORDER,BG_HOVER,TXT,TXT2,TXT3,CARD_ERR,CARD_WARN,MARKED,MARKED_FG
     t = THEMES.get(name, THEMES["dark"])
     BG=t["BG"]; BG2=t["BG2"]; BG3=t["BG3"]; BG4=t["BG4"]
     BORDER=t["BORDER"]; BG_HOVER=t["BG_HOVER"]
     TXT=t["TXT"]; TXT2=t["TXT2"]; TXT3=t["TXT3"]
     CARD_ERR=t["CARD_ERR"]; CARD_WARN=t["CARD_WARN"]
+    MARKED=t["MARKED"]; MARKED_FG=t["MARKED_FG"]
 
 # ── fonts ─────────────────────────────────────────────────────────────────────
 # Segoe UI Variable = Windows 11 modern, falls back to Segoe UI on Win10
@@ -1027,6 +1031,149 @@ class HistoryWindow(tk.Toplevel):
         self._build()
 
 
+# ── invoice detail popup ──────────────────────────────────────────────────────
+class InvoiceDetailPopup(tk.Toplevel):
+    """Wizualne porównanie KSEF / Rejestr / Księga dla wybranej faktury."""
+
+    _SOURCES = [
+        ("KSeF",           ["Netto (KSeF)","VAT (KSeF)","Brutto (KSeF)"],            ACCENT),
+        ("Rejestr VAT",    ["Netto (VAT rej.)","VAT (VAT rej.)","Brutto (VAT rej.)"], "#3b82f6"),
+        ("Rejestr sprz.",  ["Netto (rej. sp.)","VAT (rej. sp.)","Brutto (rej. sp.)"], "#8b5cf6"),
+        ("Księga",         ["Kwota w KSIEGA","% kosztu"],                              "#22c55e"),
+    ]
+    _HDR_KEYS   = {"Nr faktury","Data wyst.","Data","Sprzedawca","Nabywca",
+                   "Kontrahent","NIP","NIP (KSeF)","NIP (rejestr)","Waluta","Nr KSeF","Wystawca"}
+    _DELTA_KEYS = {"Δ Netto","Δ VAT","Δ Brutto","Rodzaj błędu","Różnica"}
+
+    def __init__(self, parent, row, check_kind="error"):
+        super().__init__(parent)
+        self.configure(bg=BG)
+        self.resizable(True, True)
+        self.minsize(460, 300)
+        nr = row.get("Nr faktury","") or row.get("Nr KSeF","faktura")
+        self.title(f"Szczegóły — {nr}")
+        self._row      = row
+        self._kind_col = {"error":ERR,"warning":WARN,"ok":OK}.get(check_kind, TXT2)
+        self._build()
+        self.lift(); self.focus_force()
+
+    def _build(self):
+        row = self._row
+        all_src_keys = {f for _,fs,_ in self._SOURCES for f in fs}
+        active  = [(l,fs,c) for l,fs,c in self._SOURCES if any(row.get(f) for f in fs)]
+        delta_v = {k:v for k,v in row.items() if k in self._DELTA_KEYS and v}
+        extra_v = {k:v for k,v in row.items()
+                   if k not in self._HDR_KEYS and k not in self._DELTA_KEYS
+                   and k not in all_src_keys and v}
+
+        # ── nagłówek faktury ─────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=BG2)
+        hdr.pack(fill="x")
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+
+        nr   = row.get("Nr faktury","") or row.get("Nr KSeF","")
+        date = row.get("Data wyst.","") or row.get("Data","")
+        name = (row.get("Sprzedawca","") or row.get("Nabywca","")
+                or row.get("Kontrahent","") or row.get("Wystawca",""))
+
+        top_r = tk.Frame(hdr, bg=BG2)
+        top_r.pack(fill="x", padx=14, pady=(10,4))
+        if nr:
+            tk.Label(top_r, text=nr, font=FMED, bg=BG2, fg=TXT).pack(side="left")
+        if date:
+            tk.Label(top_r, text=f"  ·  {date}", font=(_SYS,11), bg=BG2, fg=TXT2).pack(side="left")
+        tk.Button(top_r, text="✕", font=FSM, bg=BG2, fg=TXT3,
+                  activebackground=BG3, relief="flat", padx=8, pady=2,
+                  cursor="hand2", command=self.destroy).pack(side="right")
+
+        sub_r = tk.Frame(hdr, bg=BG2)
+        sub_r.pack(fill="x", padx=14, pady=(0,10))
+        if name:
+            tk.Label(sub_r, text=name, font=FS, bg=BG2, fg=TXT2).pack(side="left")
+        for k in ("NIP","NIP (KSeF)","NIP (rejestr)","Waluta","Nr KSeF"):
+            if row.get(k):
+                p = tk.Frame(sub_r, bg=BG3)
+                p.pack(side="left", padx=(6,0))
+                tk.Label(p, text=f"{k}: {row[k]}", font=FSM,
+                         bg=BG3, fg=TXT3, padx=6, pady=2).pack()
+
+        # ── karty źródeł danych ──────────────────────────────────────────
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=14, pady=12)
+
+        if active:
+            cf = tk.Frame(body, bg=BG)
+            cf.pack(anchor="center")
+            for si, (lbl, fields, color) in enumerate(active):
+                if si > 0:
+                    # strzałka + delta między sąsiednimi kartami
+                    arr = tk.Frame(cf, bg=BG)
+                    arr.pack(side="left", padx=10, anchor="center")
+                    tk.Label(arr, text="⟷", font=(_SYS,16),
+                             bg=BG, fg=TXT3).pack()
+                    if si == 1:
+                        for dk in ("Δ Brutto","Δ Netto","Δ VAT"):
+                            dv = delta_v.get(dk)
+                            if dv is None: continue
+                            bad = self._nonzero(dv)
+                            tk.Label(arr, text=dk, font=FSM,
+                                     bg=BG, fg=TXT3).pack(pady=(4,0))
+                            tk.Label(arr, text=dv, font=(_SYS,9,"bold"),
+                                     bg=BG, fg=ERR if bad else OK).pack()
+
+                card = tk.Frame(cf, bg=BG2,
+                                highlightbackground=color, highlightthickness=2)
+                card.pack(side="left", fill="y")
+                ch = tk.Frame(card, bg=color)
+                ch.pack(fill="x")
+                tk.Label(ch, text=lbl, font=(_SYS,10,"bold"),
+                         bg=color, fg="#18181b", padx=14, pady=7).pack()
+                tk.Frame(card, bg=BG2, height=6).pack()
+                for f in fields:
+                    val = row.get(f)
+                    if not val: continue
+                    rf = tk.Frame(card, bg=BG2)
+                    rf.pack(fill="x", padx=14, pady=3)
+                    dname = (f.replace(" (KSeF)","")
+                              .replace(" (VAT rej.)","")
+                              .replace(" (rej. sp.)",""))
+                    tk.Label(rf, text=dname, font=FSM, bg=BG2,
+                             fg=TXT3, width=9, anchor="e").pack(side="left")
+                    tk.Label(rf, text=val, font=(FMONO,11,"bold"),
+                             bg=BG2, fg=TXT, padx=8).pack(side="left")
+                tk.Frame(card, bg=BG2, height=10).pack()
+
+        # ── rodzaj błędu ─────────────────────────────────────────────────
+        if delta_v.get("Rodzaj błędu") and active:
+            rb = tk.Frame(body, bg=BG3)
+            rb.pack(fill="x", pady=(10,0))
+            tk.Label(rb, text="Rodzaj błędu:", font=FSM, bg=BG3,
+                     fg=TXT3, padx=8, pady=4).pack(side="left")
+            tk.Label(rb, text=delta_v["Rodzaj błędu"], font=(_SYS,9,"bold"),
+                     bg=BG3, fg=ERR, padx=4).pack(side="left")
+
+        # ── pozostałe pola (miesiące, MPP, NIP, daty itd.) ───────────────
+        show_extra = dict(extra_v)
+        if not active:
+            show_extra.update(delta_v)
+        if show_extra:
+            ef = tk.Frame(body, bg=BG3)
+            ef.pack(fill="x", pady=(10,0))
+            for k, v in show_extra.items():
+                bad = k.startswith("Δ") and self._nonzero(v)
+                rf = tk.Frame(ef, bg=BG3)
+                rf.pack(fill="x", padx=2, pady=1)
+                tk.Label(rf, text=k, font=FSM, bg=BG3, fg=TXT3,
+                         width=24, anchor="e", padx=8, pady=3).pack(side="left")
+                tk.Label(rf, text=v, font=(_SYS,9,"bold" if bad else "normal"),
+                         bg=BG3, fg=ERR if bad else TXT, padx=4).pack(side="left")
+
+    @staticmethod
+    def _nonzero(v):
+        try:    return abs(float(str(v).replace(",","").replace(" ",""))) > 0.005
+        except: return bool(v)
+
+
 # ── main app ──────────────────────────────────────────────────────────────────
 class App(tk.Tk):
     def __init__(self):
@@ -1042,6 +1189,9 @@ class App(tk.Tk):
         self._selected = None
         self._last_res = None
         self._mdb_path = None
+        self._active_cat = None
+        self._sort_state = {}
+        self._cards_anchor = None
         # ikona okna
         try:
             self._logo_img256 = _logo_photoimage(_LOGO_256)
@@ -1309,6 +1459,36 @@ class App(tk.Tk):
         left = tk.Frame(main, bg=BG, width=left_w)
         left.pack(side="left", fill="y"); left.pack_propagate(False)
 
+        # ── category filter strip ─────────────────────────────────────────
+        self._cat_filter_frame = tk.Frame(left, bg=BG2)
+        self._cat_filter_frame.pack(fill="x")
+        tk.Frame(left, bg=BORDER, height=1).pack(fill="x")
+        self._cat_btns = {}
+        _fi  = tk.Frame(self._cat_filter_frame, bg=BG2)
+        _fi.pack(fill="x", padx=6, pady=(5,3))
+        _fi2 = tk.Frame(self._cat_filter_frame, bg=BG2)
+        _fi2.pack(fill="x", padx=6, pady=(0,5))
+        _all_btn = tk.Button(_fi, text="Wszystkie", font=FSM,
+            bg=ACCENT, fg="#18181b", activebackground="#ea6d05",
+            relief="flat", padx=8, pady=3, cursor="hand2",
+            command=lambda: self._set_cat_filter(None))
+        _all_btn.pack(side="left", padx=(0,3))
+        self._cat_btns[None] = _all_btn
+        for _cat in _CAT_ORDER[:3]:
+            _b = tk.Button(_fi, text=_cat, font=FSM,
+                bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+                relief="flat", padx=8, pady=3, cursor="hand2",
+                command=lambda c=_cat: self._set_cat_filter(c))
+            _b.pack(side="left", padx=(0,3))
+            self._cat_btns[_cat] = _b
+        for _cat in _CAT_ORDER[3:]:
+            _b = tk.Button(_fi2, text=_cat, font=FSM,
+                bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+                relief="flat", padx=8, pady=3, cursor="hand2",
+                command=lambda c=_cat: self._set_cat_filter(c))
+            _b.pack(side="left", padx=(0,3))
+            self._cat_btns[_cat] = _b
+
         left_sb = ttk.Scrollbar(left, orient="vertical")
         left_sb.pack(side="right", fill="y")
         self._left_cv = tk.Canvas(left, bg=BG, highlightthickness=0,
@@ -1524,8 +1704,10 @@ class App(tk.Tk):
 
     def _clear_all(self):
         for w in self.list_frame.winfo_children(): w.destroy()
+        self._cards_anchor = None
         self._clear_detail()
         self._checks = []; self._selected = None; self._last_res = None
+        self._sort_state = {}
 
     def _clear_detail(self):
         for w in self.tree_frame.winfo_children(): w.destroy()
@@ -1581,17 +1763,49 @@ class App(tk.Tk):
                 tk.Label(chip, text=lbl, font=(_SYS, 8),
                          bg=BG3, fg=TXT3, padx=14, pady=4).pack()
 
-        # check cards — grouped by category
-        self._checks = res.get("checks",[])
+        self._checks = res.get("checks", [])
+        # reset filter + update button styles
+        self._active_cat = None
+        for key, btn in self._cat_btns.items():
+            btn.config(
+                bg=ACCENT if key is None else BG3,
+                fg="#18181b" if key is None else TXT2,
+                activebackground="#ea6d05" if key is None else BG4)
+        # anchor frame marks where cards start (summary stays above)
+        self._cards_anchor = tk.Frame(self.list_frame, bg=BG, height=0)
+        self._cards_anchor.pack()
+        self._rebuild_list(auto_select=True)
+
+    def _set_cat_filter(self, cat):
+        self._active_cat = cat
+        for key, btn in self._cat_btns.items():
+            active = (key == cat)
+            btn.config(
+                bg=ACCENT if active else BG3,
+                fg="#18181b" if active else TXT2,
+                activebackground="#ea6d05" if active else BG4)
+        self._rebuild_list(auto_select=True)
+
+    def _rebuild_list(self, auto_select=False):
+        # destroy only card widgets — everything after _cards_anchor
+        anchor = self._cards_anchor
+        found = (anchor is None)
+        for w in list(self.list_frame.winfo_children()):
+            if found:
+                w.destroy()
+            if w is anchor:
+                found = True
+        self._selected = None
+
         kc = {"ok":(OK,"✓"),"warning":(WARN,"⚠"),"error":(ERR,"✗")}
         _kind_cbg = {"ok": BG2, "warning": CARD_WARN, "error": CARD_ERR}
 
-        # group checks by category, preserving original index for _select
         from collections import OrderedDict
         grouped: OrderedDict = OrderedDict()
         for i, chk in enumerate(self._checks):
             cat = _CAT_MAP.get(chk.get("id",""), "Inne")
-            grouped.setdefault(cat, []).append((i, chk))
+            if self._active_cat is None or cat == self._active_cat:
+                grouped.setdefault(cat, []).append((i, chk))
 
         def _cat_rank(c): return _CAT_ORDER.index(c) if c in _CAT_ORDER else 999
         sorted_groups = sorted(grouped.items(), key=lambda x: _cat_rank(x[0]))
@@ -1601,15 +1815,12 @@ class App(tk.Tk):
             n_warn = sum(1 for _, c in items if c["kind"]=="warning")
             cat_col = ERR if n_err else (WARN if n_warn else TXT3)
 
-            # ── category header ───────────────────────────────────────────
             cat_hdr = tk.Frame(self.list_frame, bg=BG)
             cat_hdr.pack(fill="x", padx=4, pady=(14,2))
             row_hdr = tk.Frame(cat_hdr, bg=BG)
             row_hdr.pack(fill="x")
             tk.Label(row_hdr, text=cat_name.upper(),
-                     font=(_SYS, 8, "bold"), bg=BG, fg=cat_col,
-                     padx=0).pack(side="left")
-            # linia po nazwie kategorii
+                     font=(_SYS, 8, "bold"), bg=BG, fg=cat_col).pack(side="left")
             tk.Frame(row_hdr, bg=BORDER, height=1).pack(
                 side="left", fill="x", expand=True, padx=8)
             if n_err or n_warn:
@@ -1619,7 +1830,6 @@ class App(tk.Tk):
                 tk.Label(row_hdr, text=badge_txt,
                          font=(_SYS, 8, "bold"), bg=BG, fg=cat_col).pack(side="right")
 
-            # ── cards in this category ────────────────────────────────────
             for i, chk in items:
                 col, icon = kc.get(chk["kind"],(TXT2,"·"))
                 n = len(chk.get("rows",[]))
@@ -1630,26 +1840,21 @@ class App(tk.Tk):
                                 highlightthickness=1, cursor="hand2")
                 card.pack(fill="x", pady=2, padx=4)
 
-                # left accent strip — grubszy dla błędów/ostrzeżeń
-                strip_w = 4 if chk["kind"]=="ok" else 4
-                strip = tk.Frame(card, bg=col if chk["kind"]!="ok" else BG4, width=strip_w)
+                strip = tk.Frame(card, bg=col if chk["kind"]!="ok" else BG4, width=4)
                 strip.pack(side="left", fill="y")
                 setattr(self, f"_strip_{i}", strip)
 
-                # content area
                 inner = tk.Frame(card, bg=card_bg)
                 inner.pack(side="left", fill="both", expand=True, padx=(12,12), pady=10)
 
                 top = tk.Frame(inner, bg=card_bg)
                 top.pack(fill="x")
 
-                lbl_icon = tk.Label(top, text=icon, font=(_SYS,11,"bold"),
-                                    bg=card_bg, fg=col, width=2)
-                lbl_icon.pack(side="left")
-                lbl_title = tk.Label(top, text=chk["title"], font=(_SYS,11,"bold"),
-                                     bg=card_bg, fg=TXT if chk["kind"]=="ok" else col,
-                                     anchor="w")
-                lbl_title.pack(side="left", fill="x", expand=True)
+                tk.Label(top, text=icon, font=(_SYS,11,"bold"),
+                         bg=card_bg, fg=col, width=2).pack(side="left")
+                tk.Label(top, text=chk["title"], font=(_SYS,11,"bold"),
+                         bg=card_bg, fg=TXT if chk["kind"]=="ok" else col,
+                         anchor="w").pack(side="left", fill="x", expand=True)
 
                 if n:
                     badge_bg = col if chk["kind"]!="ok" else BG4
@@ -1661,7 +1866,6 @@ class App(tk.Tk):
                     tk.Label(inner, text=chk["detail"], font=(_SYS, 9),
                              bg=card_bg, fg=TXT3, anchor="w").pack(fill="x", pady=(4,0))
 
-                # hover — check bounds to avoid flicker between child widgets
                 def _hover_on(e, _in=inner, _tp=top, _bg=BG_HOVER):
                     _in.config(bg=_bg); _tp.config(bg=_bg)
                     for w in list(_tp.winfo_children()) + list(_in.winfo_children()):
@@ -1687,10 +1891,13 @@ class App(tk.Tk):
 
                 setattr(self, f"_card_{i}", card)
 
-        # auto-select first non-ok check
-        first_bad = next((i for i,c in enumerate(self._checks) if c["kind"]!="ok"), None)
-        if first_bad is not None:
-            self.after(100, lambda: self._select(first_bad))
+        if auto_select:
+            visible_bad = [i for i, c in enumerate(self._checks)
+                           if c["kind"] != "ok" and
+                           (self._active_cat is None or
+                            _CAT_MAP.get(c.get("id",""),"Inne") == self._active_cat)]
+            if visible_bad:
+                self.after(100, lambda: self._select(visible_bad[0]))
 
     def _select(self, idx):
         kc = {"ok":OK,"warning":WARN,"error":ERR}
@@ -1734,6 +1941,29 @@ class App(tk.Tk):
                      font=FB, bg=BG, fg=OK).pack(anchor="w", pady=20, padx=12)
             return
 
+        cols = list(rows[0].keys())
+        chk_id = chk.get("id", id(chk))
+        sort_col, sort_asc = self._sort_state.get(chk_id, (None, True))
+
+        # sort rows if column selected
+        rows_sorted = list(rows)
+        if sort_col and sort_col in cols:
+            def _sk(r):
+                v = str(r.get(sort_col,"") or "")
+                try: return (0, float(v.replace(",","").replace(" ","")))
+                except: return (1, v.lower())
+            rows_sorted.sort(key=_sk, reverse=not sort_asc)
+
+        # wczytaj istniejące oznaczenia dla tego sprawdzenia
+        mdb_key   = self._mdb_path or ""
+        cur_marks = cfg_module.get_marks(mdb_key, chk_id)
+
+        def _row_key(row):
+            for k in ("Nr faktury","Nr KSeF","KSEF","Numer"):
+                if row.get(k): return str(row[k])
+            return str(next((v for v in row.values() if v), ""))
+
+        # count + quick-sort buttons
         count_row = tk.Frame(self.tree_frame, bg=BG2)
         count_row.pack(fill="x", padx=8, pady=(4,4))
         tk.Label(count_row, text="Znaleziono:", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
@@ -1742,75 +1972,108 @@ class App(tk.Tk):
                  fg="#18181b").pack(side="left", padx=4)
         tk.Label(count_row, text="wierszy", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
 
-        cols = list(rows[0].keys())
+        # licznik oznaczeń (aktualizowany dynamicznie)
+        mark_lbl_var = tk.StringVar()
+        mark_lbl = tk.Label(count_row, textvariable=mark_lbl_var, font=FSM,
+                            bg=BG2, fg=MARKED_FG)
+        mark_lbl.pack(side="left", padx=(10,0))
+
+        def _update_mark_lbl():
+            n = len(cfg_module.get_marks(mdb_key, chk_id))
+            mark_lbl_var.set(f"✓ {n} zaznaczonych" if n else "")
+
+        # przycisk "Odznacz wszystkie"
+        def _clear_all_marks(_chk=chk):
+            cfg_module.clear_marks(mdb_key, chk_id)
+            self._show_detail(_chk)
+
+        _update_mark_lbl()
+        if cur_marks:
+            tk.Button(count_row, text="Odznacz wszystkie", font=FSM,
+                      bg=BG3, fg=TXT3, activebackground=BG4,
+                      relief="flat", padx=8, pady=2, cursor="hand2",
+                      command=_clear_all_marks).pack(side="left", padx=(6,0))
+
+        date_cols   = [c for c in cols if "ata" in c]
+        amount_cols = [c for c in cols if any(k in c for k in ("Brutto","Netto","Kwota","Δ","VAT"))]
+        sort_btns = (date_cols[:1] + amount_cols[:1])[:2]
+        if sort_btns:
+            tk.Label(count_row, text="Sortuj:", font=(_SYS,9),
+                     bg=BG2, fg=TXT3).pack(side="left", padx=(14,4))
+            for sc in sort_btns:
+                is_active = (sc == sort_col)
+                arrow = (" ↑" if sort_asc else " ↓") if is_active else ""
+                short = sc.replace(" (KSeF)","").replace(" (VAT rej.)","").replace(" (rej. sp.)","")
+                def _sort_click(c=sc, _chk=chk, _id=chk_id):
+                    cur_col, cur_asc = self._sort_state.get(_id, (None, True))
+                    self._sort_state[_id] = (c, not cur_asc if cur_col == c else True)
+                    self._show_detail(_chk)
+                tk.Button(count_row, text=f"{short}{arrow}", font=FSM,
+                          bg=ACCENT if is_active else BG3,
+                          fg="#18181b" if is_active else TXT2,
+                          activebackground="#ea6d05" if is_active else BG4,
+                          relief="flat", padx=8, pady=2, cursor="hand2",
+                          command=_sort_click).pack(side="left", padx=(0,3))
+
         vsb = ttk.Scrollbar(self.tree_frame, orient="vertical")
         hsb = ttk.Scrollbar(self.tree_frame, orient="horizontal")
         vsb.pack(side="right", fill="y")
         hsb.pack(side="bottom", fill="x")
-
-        # >5 kolumn (porównania kwot) → tryb rozwijany; <=5 → płaski
-        EXPANDABLE = len(cols) > 5
-        head_cols  = cols[:3] if EXPANDABLE else cols
-        sub_cols   = cols[3:] if EXPANDABLE else []
-
-        tree = ttk.Treeview(self.tree_frame,
-                             columns=head_cols,
-                             show="tree headings" if EXPANDABLE else "headings",
+        tree = ttk.Treeview(self.tree_frame, columns=cols, show="headings",
                              yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         vsb.config(command=tree.yview)
         hsb.config(command=tree.xview)
         tree.pack(side="left", fill="both", expand=True)
 
-        if EXPANDABLE:
-            tree.column("#0", width=22, minwidth=22, stretch=False)
-            tree.heading("#0", text="")
-            tree.tag_configure("detail_row", foreground=TXT2, font=(_SYS, 9))
+        tree.tag_configure("marked",
+                           background=MARKED, foreground=MARKED_FG)
 
-        for c in head_cols:
-            w = max(len(str(c)),
-                    max((len(str(r.get(c,"")or"")) for r in rows[:100]), default=0))
-            px = min(w*9+20, 320)
-            tree.heading(c, text=c, anchor="w")
+        for c in cols:
+            w = max(len(str(c)), max((len(str(r.get(c,"")or"")) for r in rows[:100]),default=0))
+            px = min(w*8+20, 320)
+            is_sorted = (c == sort_col)
+            arrow = (" ↑" if sort_asc else " ↓") if is_sorted else ""
+            def _hdr_sort(c=c, _chk=chk, _id=chk_id):
+                cur_col, cur_asc = self._sort_state.get(_id, (None, True))
+                self._sort_state[_id] = (c, not cur_asc if cur_col == c else True)
+                self._show_detail(_chk)
+            tree.heading(c, text=f"{c}{arrow}", anchor="w", command=_hdr_sort)
             tree.column(c, width=px, minwidth=50, anchor="w", stretch=False)
 
-        for row in rows:
-            pid = tree.insert("", "end",
-                              values=tuple(str(row.get(c,"")or"") for c in head_cols))
-            if EXPANDABLE:
-                for sc in sub_cols:
-                    val = str(row.get(sc,"")or"")
-                    tree.insert(pid, "end",
-                                text=f"  {sc}",
-                                values=(val,) + ("",)*(len(head_cols)-1),
-                                tags=("detail_row",))
+        for row in rows_sorted:
+            rk  = _row_key(row)
+            tag = ("marked",) if rk in cur_marks else ()
+            tree.insert("", "end",
+                        values=tuple(str(row.get(c,"")or"") for c in cols),
+                        tags=tag)
 
-        tree.bind("<MouseWheel>",
-                  lambda e: tree.yview_scroll(-1*(e.delta//120), "units"))
+        tree.bind("<MouseWheel>", lambda e: tree.yview_scroll(-1*(e.delta//120),"units"))
 
-        def on_dbl(e, _t=tree, _exp=EXPANDABLE, _hc=head_cols):
+        def on_right_click(e, _t=tree, _c=cols, _id=chk_id):
             item = _t.identify_row(e.y)
             if not item: return
-            if _exp and _t.parent(item) == "":
-                _t.item(item, open=not _t.item(item, "open"))
-            else:
-                if _exp:
-                    val = (_t.item(item,"values") or ("",))[0]
-                else:
-                    col_id = _t.identify_column(e.x)
-                    if not col_id: return
-                    idx = int(col_id.replace("#","")) - 1
-                    vals = _t.item(item,"values")
-                    val = vals[idx] if 0 <= idx < len(vals) else ""
-                if not val: return
-                self.clipboard_clear(); self.clipboard_append(str(val))
-                self._set_status(f"✓ Skopiowano: {str(val)[:60]}")
+            vals = _t.item(item, "values")
+            rkey = vals[0] if vals else ""
+            is_m = cfg_module.toggle_mark(mdb_key, _id, rkey)
+            _t.item(item, tags=("marked",) if is_m else ())
+            # wymuś natychmiastowe przerysowanie (Windows TTK bug)
+            _t.update_idletasks()
+            _t.yview_moveto(_t.yview()[0])
+            _update_mark_lbl()
+            return "break"
 
+        tree.bind("<Button-3>", on_right_click)
+
+        def on_dbl(e, _t=tree, _c=cols, _chk=chk):
+            item = _t.identify_row(e.y)
+            if not item: return
+            vals = _t.item(item, "values")
+            row_dict = {_c[i]: vals[i] for i in range(len(_c)) if i < len(vals)}
+            InvoiceDetailPopup(self, row_dict, check_kind=_chk["kind"])
         tree.bind("<Double-Button-1>", on_dbl)
 
-        hint = ("ℹ  Dwuklik na wierszu = rozwiń/zwiń  |  Dwuklik na szczegółach = kopiuj"
-                if EXPANDABLE else
-                "ℹ  Dwuklik na komórce = kopiuj do schowka")
-        tk.Label(self.tree_frame, text=hint,
+        tk.Label(self.tree_frame,
+                 text="ℹ  Nagłówek = sortuj  |  Dwuklik = szczegóły  |  Prawy klik = zaznacz / odznacz",
                  font=FSM, bg=BG, fg=TXT3, anchor="e").pack(
                  side="bottom", fill="x", padx=8, pady=2)
 

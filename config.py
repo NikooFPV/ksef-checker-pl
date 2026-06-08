@@ -110,3 +110,45 @@ def delete_history_entry(idx: int):
                 json.dump(history, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+
+# ── oznaczenia wierszy ("do sprawdzenia") ─────────────────────────────────────
+MARKS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "marks.json")
+
+def load_marks() -> dict:
+    if os.path.exists(MARKS_FILE):
+        try:
+            with open(MARKS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def get_marks(mdb_path: str, check_id: str) -> set:
+    return set(load_marks().get(mdb_path or "", {}).get(check_id, []))
+
+def toggle_mark(mdb_path: str, check_id: str, row_key: str) -> bool:
+    """Przełącz oznaczenie wiersza. Zwraca True jeśli teraz zaznaczony."""
+    marks = load_marks()
+    bucket = marks.setdefault(mdb_path or "", {}).setdefault(check_id, [])
+    if row_key in bucket:
+        bucket.remove(row_key)
+        marked = False
+    else:
+        bucket.append(row_key)
+        marked = True
+    try:
+        with open(MARKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(marks, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return marked
+
+def clear_marks(mdb_path: str, check_id: str):
+    marks = load_marks()
+    marks.get(mdb_path or "", {}).pop(check_id, None)
+    try:
+        with open(MARKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(marks, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
