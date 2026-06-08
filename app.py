@@ -27,15 +27,19 @@ def _logo_photoimage(b64: str):
 _CAT_MAP  = {cid: cat for cid, _, cat, _ in ALL_CHECKS}
 _CAT_ORDER = list(dict.fromkeys(cat for _, _, cat, _ in ALL_CHECKS))
 
-# ── colours & fonts ───────────────────────────────────────────────────────────
-BG    = "#1a1a1a"; BG2 = "#222222"; BG3 = "#2a2a2a"; BG4 = "#333333"
-ACCENT= "#fb923c"; A2  = "#86efac"; WARN= "#fbbf24"; ERR = "#f87171"
-OK    = "#86efac"; TXT = "#f0f0f0"; TXT2= "#a0a0a0"; TXT3= "#606060"
-BORDER= "#3d3d3d"
-_SYS  = "Segoe UI"   # Windows system font (closest to SF Pro on Windows)
+# ── colours ──────────────────────────────────────────────────────────────────
+# Zinc dark (Tailwind) + orange accent — VS Code / Linear style
+BG    = "#18181b"; BG2 = "#25252f"; BG3 = "#272730"; BG4 = "#313139"
+ACCENT= "#f97316"; A2  = "#22c55e"; WARN= "#eab308"; ERR = "#ef4444"
+OK    = "#22c55e"; TXT = "#fafafa"; TXT2= "#a1a1aa"; TXT3= "#52525b"
+BORDER= "#2e2e38"; BG_HOVER = "#25252f"
+
+# ── fonts ─────────────────────────────────────────────────────────────────────
+# Segoe UI Variable = Windows 11 modern, falls back to Segoe UI on Win10
+_SYS  = "Segoe UI Variable"
+FMONO = "Cascadia Code"        # monospace — fallback do Consolas
 FB    = (_SYS, 11);  FS = (_SYS, 10);  FSM = (_SYS, 9)
-FBIG  = (_SYS, 19, "bold"); FMED = (_SYS, 12, "bold")
-BG_HOVER = "#2e2e2e"   # karta pod kursorem
+FBIG  = (_SYS, 20, "bold");    FMED = (_SYS, 12, "bold")
 
 MONTHS_PL = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec",
              "Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"]
@@ -213,21 +217,21 @@ class SettingsWindow(tk.Toplevel):
         bot = tk.Frame(self, bg=BG2, pady=8)
         bot.pack(fill="x", side="bottom")
         tk.Button(bot, text="  Zapisz  ", font=FMED,
-                  bg=ACCENT, fg="#111111",
-                  activebackground="#ea7522", activeforeground="#f0f0f0",
-                  relief="flat", padx=14, pady=5,
+                  bg=ACCENT, fg="#18181b",
+                  activebackground="#ea6d05", activeforeground="#18181b",
+                  relief="flat", padx=14, pady=7,
                   command=self._save).pack(side="right", padx=12)
         tk.Button(bot, text="  Anuluj  ", font=FB,
                   bg=BG3, fg=TXT,
                   activebackground=BG4, activeforeground=TXT,
-                  relief="flat", padx=12, pady=5,
+                  relief="flat", padx=12, pady=7,
                   command=self.destroy).pack(side="right", padx=4)
 
         # przycisk sprawdzenia aktualizacji (lewa strona)
         self._upd_btn = tk.Button(bot, text="🔔  Sprawdź aktualizacje", font=FSM,
                   bg=BG3, fg=TXT,
                   activebackground=BG4, activeforeground=TXT,
-                  relief="flat", padx=12, pady=5,
+                  relief="flat", padx=12, pady=7,
                   command=self._check_updates_now)
         self._upd_btn.pack(side="left", padx=12)
         self._upd_lbl = tk.Label(bot, text="", font=FSM, bg=BG2, fg=TXT2)
@@ -264,7 +268,7 @@ class SettingsWindow(tk.Toplevel):
                             text=f"Dostępna wersja {tag}!", fg=WARN),
                         self._upd_btn.config(
                             text="  Aktualizuj  ", state="normal",
-                            bg=ACCENT, fg="#111111",
+                            bg=ACCENT, fg="#18181b",
                             command=_do_update)
                     ))
                 else:
@@ -312,105 +316,126 @@ class BatchTab(tk.Frame):
         self._build()
 
     def _build(self):
-        # top controls
-        ctrl = tk.Frame(self, bg=BG2, pady=10)
+        # ── toolbar ───────────────────────────────────────────────────────
+        ctrl = tk.Frame(self, bg=BG2)
         ctrl.pack(fill="x")
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
 
-        tk.Button(ctrl, text="＋  Dodaj bazy MDB", font=FMED,
-                  bg=ACCENT, fg="#111111",
-                  activebackground="#ea7522", activeforeground="#f0f0f0",
-                  relief="flat", padx=14, pady=5,
-                  command=self._add_files).pack(side="left", padx=12)
+        ctrl_inner = tk.Frame(ctrl, bg=BG2)
+        ctrl_inner.pack(fill="x", padx=16, pady=10)
 
-        tk.Button(ctrl, text="✕  Wyczyść listę", font=FSM,
-                  bg=BG3, fg=TXT, activebackground=BG4,
-                  relief="flat", padx=10, pady=5,
-                  command=self._clear_list).pack(side="left", padx=4)
+        tk.Button(ctrl_inner, text="＋  Dodaj bazy MDB", font=FMED,
+                  bg=ACCENT, fg="#18181b",
+                  activebackground="#ea6d05", activeforeground="#18181b",
+                  relief="flat", padx=14, pady=7, cursor="hand2",
+                  command=self._add_files).pack(side="left")
 
-        tk.Frame(ctrl, bg=BORDER, width=1).pack(side="left", fill="y", padx=10)
+        tk.Button(ctrl_inner, text="✕  Wyczyść", font=FB,
+                  bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+                  relief="flat", padx=12, pady=7, cursor="hand2",
+                  command=self._clear_list).pack(side="left", padx=(6,0))
 
-        # period for batch
-        tk.Label(ctrl, text="Okres:", font=FS, bg=BG2, fg=TXT).pack(side="left")
+        tk.Frame(ctrl_inner, bg=BORDER, width=1).pack(side="left", fill="y", padx=14)
+
+        # segmented period control — identyczny jak w single tab
         self._period_var = tk.StringVar(value="month")
-        tk.Radiobutton(ctrl, text="Cały", variable=self._period_var, value="all",
-                       font=FS, bg=BG2, fg=TXT, selectcolor=ACCENT,
-                       activebackground=BG2).pack(side="left", padx=(6,0))
-        tk.Radiobutton(ctrl, text="Miesiąc:", variable=self._period_var, value="month",
-                       font=FS, bg=BG2, fg=TXT, selectcolor=ACCENT,
-                       activebackground=BG2).pack(side="left", padx=(8,0))
+        seg = tk.Frame(ctrl_inner, bg=BG3)
+        seg.pack(side="left")
+
+        def _set_period(val):
+            self._period_var.set(val)
+            is_m = val == "month"
+            _b_all.config(bg=ACCENT if not is_m else BG3,
+                          fg="#18181b" if not is_m else TXT2)
+            _b_mon.config(bg=ACCENT if is_m else BG3,
+                          fg="#18181b" if is_m else TXT2)
+
+        _b_all = tk.Button(seg, text="Cały", font=FS,
+            bg=BG3, fg=TXT2, activebackground=BG4,
+            relief="flat", padx=14, pady=7, cursor="hand2",
+            command=lambda: _set_period("all"))
+        _b_all.pack(side="left")
+        tk.Frame(seg, bg=BORDER, width=1).pack(side="left", fill="y")
+        _b_mon = tk.Button(seg, text="Miesiąc", font=FS,
+            bg=ACCENT, fg="#18181b", activebackground="#ea6d05",
+            relief="flat", padx=14, pady=7, cursor="hand2",
+            command=lambda: _set_period("month"))
+        _b_mon.pack(side="left")
 
         import datetime; now = datetime.datetime.now()
         self._month_var = tk.StringVar(value=MONTHS_PL[now.month-1])
         self._year_var  = tk.StringVar(value=str(now.year))
-        ttk.Combobox(ctrl, textvariable=self._month_var,
+        ttk.Combobox(ctrl_inner, textvariable=self._month_var,
                      values=MONTHS_PL, state="readonly",
-                     width=10, font=FS).pack(side="left", padx=3)
-        tk.Spinbox(ctrl, from_=2020, to=2035,
+                     width=11, font=FS).pack(side="left", padx=(8,4))
+        tk.Spinbox(ctrl_inner, from_=2020, to=2035,
                    textvariable=self._year_var, width=5, font=FS,
-                   bg=BG3, fg=TXT, buttonbackground=BG3,
-                   relief="flat").pack(side="left", padx=3)
+                   bg=BG3, fg=TXT, buttonbackground=BG4,
+                   insertbackground=TXT, relief="flat").pack(side="left")
 
-        tk.Frame(ctrl, bg=BORDER, width=1).pack(side="left", fill="y", padx=10)
+        tk.Frame(ctrl_inner, bg=BORDER, width=1).pack(side="left", fill="y", padx=14)
 
-        self._run_btn = tk.Button(ctrl, text="▶  Sprawdź wszystkie", font=FMED,
-                                   bg=A2, fg="#0a1f14",
-                                   activebackground="#4ade80", activeforeground="#0a1f14",
-                                   relief="flat", padx=14, pady=5,
+        self._run_btn = tk.Button(ctrl_inner, text="▶  Sprawdź wszystkie", font=FMED,
+                                   bg=ACCENT, fg="#18181b",
+                                   activebackground="#ea6d05", activeforeground="#18181b",
+                                   relief="flat", padx=16, pady=7, cursor="hand2",
                                    state="disabled", command=self._run_all)
-        self._run_btn.pack(side="left", padx=4)
+        self._run_btn.pack(side="left", padx=(0,6))
 
-        self._export_btn = tk.Button(ctrl, text="↓  Eksport zbiorczy", font=FMED,
-                                      bg=BG3, fg=TXT,
-                                      activebackground=BG4,
-                                      relief="flat", padx=12, pady=5,
+        self._export_btn = tk.Button(ctrl_inner, text="↓  Excel zbiorczy", font=FB,
+                                      bg=BG3, fg=A2,
+                                      activebackground=BG4, activeforeground=A2,
+                                      relief="flat", padx=14, pady=7, cursor="hand2",
                                       state="disabled", command=self._export_batch)
-        self._export_btn.pack(side="left", padx=4)
+        self._export_btn.pack(side="left")
 
-        self._status = tk.Label(ctrl, text="", font=FS, bg=BG2, fg=TXT2)
-        self._status.pack(side="left", padx=10)
+        self._status = tk.Label(ctrl_inner, text="", font=FS, bg=BG2, fg=TXT2)
+        self._status.pack(side="left", padx=12)
 
         style = ttk.Style()
         style.configure("B.Horizontal.TProgressbar",
                         troughcolor=BG3, background=ACCENT,
                         bordercolor=BG3, lightcolor=ACCENT, darkcolor=ACCENT)
-        self._prog = ttk.Progressbar(ctrl, style="B.Horizontal.TProgressbar",
-                                      mode="determinate", length=180)
+        self._prog = ttk.Progressbar(ctrl_inner, style="B.Horizontal.TProgressbar",
+                                      mode="determinate", length=160)
 
-        # split: left=file list, right=results
+        # ── split: left=file list, right=results ──────────────────────────
         split = tk.Frame(self, bg=BG)
         split.pack(fill="both", expand=True)
 
         # LEFT – file queue
-        left = tk.Frame(split, bg=BG, width=340)
+        left = tk.Frame(split, bg=BG2, width=300)
         left.pack(side="left", fill="y"); left.pack_propagate(False)
+        tk.Frame(split, bg=BORDER, width=1).pack(side="left", fill="y")
 
-        tk.Label(left, text="Kolejka plików", font=FSM,
-                 bg=BG, fg=TXT2, anchor="w").pack(fill="x", padx=12, pady=(8,2))
+        # nagłówek kolejki
+        q_hdr = tk.Frame(left, bg=BG2)
+        q_hdr.pack(fill="x", padx=14, pady=(12,6))
+        tk.Label(q_hdr, text="KOLEJKA PLIKÓW", font=(_SYS,8,"bold"),
+                 bg=BG2, fg=TXT3).pack(side="left")
 
         lsb = ttk.Scrollbar(left, orient="vertical")
         lsb.pack(side="right", fill="y")
-        self._file_list = tk.Listbox(left, bg=BG2, fg=TXT, font=FSM,
-                                      selectbackground=BG3, selectforeground=TXT,
+        self._file_list = tk.Listbox(left, bg=BG2, fg=TXT, font=FS,
+                                      selectbackground=BG3, selectforeground=ACCENT,
                                       borderwidth=0, highlightthickness=0,
                                       yscrollcommand=lsb.set, activestyle="none")
-        self._file_list.pack(side="left", fill="both", expand=True, padx=(8,0))
+        self._file_list.pack(side="left", fill="both", expand=True, padx=(14,0))
         lsb.config(command=self._file_list.yview)
 
-        # right-click to remove
         self._file_list.bind("<Button-3>",
             lambda e: self._remove_file(self._file_list.nearest(e.y)))
-        tk.Label(left, text="Prawy klik = usuń plik", font=FSM,
-                 bg=BG, fg=TXT3, anchor="w").pack(fill="x", padx=12, pady=2)
-
-        # divider
-        tk.Frame(split, bg=BORDER, width=1).pack(side="left", fill="y")
+        tk.Label(left, text="Prawy klik = usuń", font=(_SYS,8),
+                 bg=BG2, fg=TXT3, anchor="w").pack(fill="x", padx=14, pady=4)
 
         # RIGHT – results grid
         right = tk.Frame(split, bg=BG)
         right.pack(side="left", fill="both", expand=True)
 
-        tk.Label(right, text="Wyniki", font=FSM,
-                 bg=BG, fg=TXT2, anchor="w").pack(fill="x", padx=12, pady=(8,2))
+        r_hdr = tk.Frame(right, bg=BG)
+        r_hdr.pack(fill="x", padx=14, pady=(12,6))
+        tk.Label(r_hdr, text="WYNIKI", font=(_SYS,8,"bold"),
+                 bg=BG, fg=TXT3).pack(side="left")
 
         rsb = ttk.Scrollbar(right, orient="vertical")
         rsb.pack(side="right", fill="y")
@@ -590,7 +615,11 @@ class BatchTab(tk.Frame):
             _export_batch_excel(self._results, path)
             self._status.config(text=f"✓ Zapisano: {os.path.basename(path)}", fg=OK)
         except Exception as ex:
-            self._status.config(text=f"✗ Błąd: {ex}", fg=ERR)
+            import traceback
+            self._status.config(text=f"✗ Błąd eksportu", fg=ERR)
+            from tkinter import messagebox
+            messagebox.showerror("Błąd eksportu Excel",
+                                 f"{ex}\n\n{traceback.format_exc()[-600:]}")
 
 
 def _export_batch_excel(results, save_path):
@@ -808,6 +837,7 @@ class UpdateDialog(tk.Toplevel):
 
 
 # ── historia analiz ───────────────────────────────────────────────────────────
+# ── historia analiz ───────────────────────────────────────────────────────────
 class HistoryWindow(tk.Toplevel):
     def __init__(self, parent, on_load):
         super().__init__(parent)
@@ -892,10 +922,10 @@ class HistoryWindow(tk.Toplevel):
                      font=FSM, bg=BG2, fg=TXT2).pack(side="left", padx=(20,10))
             if n_err:
                 tk.Label(row2, text=f" ✗ {n_err} ", font=("Consolas",8,"bold"),
-                         bg=ERR, fg="#111111").pack(side="left", padx=2)
+                         bg=ERR, fg="#18181b").pack(side="left", padx=2)
             if n_wrn:
                 tk.Label(row2, text=f" ⚠ {n_wrn} ", font=("Consolas",8,"bold"),
-                         bg=WARN, fg="#111111").pack(side="left", padx=2)
+                         bg=WARN, fg="#18181b").pack(side="left", padx=2)
             if not n_err and not n_wrn:
                 tk.Label(row2, text="Wszystko OK", font=FSM,
                          bg=BG2, fg=OK).pack(side="left", padx=2)
@@ -908,8 +938,8 @@ class HistoryWindow(tk.Toplevel):
             btn_col = tk.Frame(card, bg=BG2)
             btn_col.pack(side="right", padx=8, pady=8)
             tk.Button(btn_col, text="  Otwórz  ", font=FSM,
-                      bg=ACCENT, fg="#111111",
-                      activebackground="#ea7522", activeforeground="#f0f0f0",
+                      bg=ACCENT, fg="#18181b",
+                      activebackground="#ea6d05", activeforeground="#18181b",
                       relief="flat", padx=8, pady=4,
                       command=lambda e=entry: self._load(e)).pack(fill="x", pady=(0,4))
             tk.Button(btn_col, text="  Usuń  ", font=FSM,
@@ -1009,8 +1039,8 @@ class App(tk.Tk):
             tk.Label(left, text=f"  —  {short}",
                      font=FSM, bg="#2b1a00", fg=TXT2).pack(side="left", padx=6)
         tk.Button(banner, text="  Aktualizuj  ", font=FSM,
-                  bg=ACCENT, fg="#111111",
-                  activebackground="#ea7522", activeforeground="#111111",
+                  bg=ACCENT, fg="#18181b",
+                  activebackground="#ea6d05", activeforeground="#18181b",
                   relief="flat", padx=10, pady=4,
                   command=lambda: self._start_update(tag, installer_url, banner)).pack(
                   side="right", padx=4, pady=6)
@@ -1028,41 +1058,60 @@ class App(tk.Tk):
 
     # ── layout ────────────────────────────────────────────────────────────
     def _build(self):
-        # header
-        hdr = tk.Frame(self, bg=BG2, height=60)
+        # ── header ────────────────────────────────────────────────────────
+        hdr = tk.Frame(self, bg=BG2, height=68)
         hdr.pack(fill="x"); hdr.pack_propagate(False)
+
+        # separator line na dole headera
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+
+        # logo
         try:
             self._logo_img48 = _logo_photoimage(_LOGO_48)
             tk.Label(hdr, image=self._logo_img48,
-                     bg=BG2).pack(side="left", padx=(16,8), pady=6)
+                     bg=BG2).pack(side="left", padx=(20,10), pady=10)
         except Exception:
             pass
-        name_col = tk.Frame(hdr, bg=BG2)
-        name_col.pack(side="left", pady=6)
-        tk.Label(name_col, text="KSeF Checker", font=FBIG,
-                 bg=BG2, fg=TXT).pack(anchor="w")
-        tk.Label(name_col, text="weryfikator spójności bazy MDB",
-                 font=(_SYS, 8), bg=BG2, fg=TXT3).pack(anchor="w")
-        tk.Button(hdr, text="⚙  Ustawienia", font=FSM, bg=BG3, fg=TXT,
-                  activebackground=BG4, activeforeground=TXT,
-                  relief="flat", padx=12, pady=5,
-                  command=self._open_settings).pack(side="right", padx=4, pady=8)
-        tk.Button(hdr, text="🕐  Historia", font=FSM, bg=BG3, fg=TXT,
-                  activebackground=BG4, activeforeground=TXT,
-                  relief="flat", padx=12, pady=5,
-                  command=self._open_history).pack(side="right", padx=4, pady=8)
 
-        # notebook: single vs batch
+        # nazwa + wersja
+        name_col = tk.Frame(hdr, bg=BG2)
+        name_col.pack(side="left", pady=12)
+        title_row = tk.Frame(name_col, bg=BG2)
+        title_row.pack(anchor="w")
+        tk.Label(title_row, text="KSeF Checker", font=FBIG,
+                 bg=BG2, fg=TXT).pack(side="left")
+        tk.Label(title_row, text=f"  v{VERSION}", font=(_SYS, 9),
+                 bg=ACCENT, fg="#18181b", padx=7, pady=2).pack(side="left", padx=8)
+        tk.Label(name_col, text="weryfikator spójności bazy MDB",
+                 font=(_SYS, 9), bg=BG2, fg=TXT3).pack(anchor="w", pady=(2,0))
+
+        # przyciski po prawej
+        def _hdr_btn(text, cmd):
+            b = tk.Button(hdr, text=text, font=FSM,
+                          bg=BG3, fg=TXT2,
+                          activebackground=BG4, activeforeground=TXT,
+                          relief="flat", padx=14, pady=7,
+                          cursor="hand2", command=cmd)
+            b.pack(side="right", padx=4, pady=12)
+            b.bind("<Enter>", lambda e: b.config(fg=TXT))
+            b.bind("<Leave>", lambda e: b.config(fg=TXT2))
+            return b
+
+        _hdr_btn("⚙  Ustawienia", self._open_settings)
+        _hdr_btn("🕐  Historia",   self._open_history)
+
+        # ── notebook ──────────────────────────────────────────────────────
         nb_style = ttk.Style(self); nb_style.theme_use("clam")
-        nb_style.configure("App.TNotebook", background=BG2,
+        nb_style.configure("App.TNotebook", background=BG,
                            borderwidth=0, tabmargins=[0,0,0,0])
         nb_style.configure("App.TNotebook.Tab",
-                           background=BG3, foreground=TXT2,
-                           font=(_SYS, 9), padding=[16, 6],
+                           background=BG2, foreground=TXT3,
+                           font=(_SYS, 10), padding=[20, 8],
                            borderwidth=0)
         nb_style.map("App.TNotebook.Tab",
                      background=[("selected", BG)],
-                     foreground=[("selected", ACCENT)])
+                     foreground=[("selected", TXT)],
+                     font=[("selected", (_SYS, 10, "bold"))])
         nb = ttk.Notebook(self, style="App.TNotebook")
         nb.pack(fill="both", expand=True)
 
@@ -1076,90 +1125,109 @@ class App(tk.Tk):
                                    on_open_single=self._open_in_single)
         nb.add(self._batch_tab, text="  Wiele baz (batch)  ")
 
+
         # ── build single tab ──────────────────────────────────────────────
         parent = self._single_tab
 
-        # toolbar
-        tb = tk.Frame(parent, bg=BG3, pady=8)
+        # ── toolbar ───────────────────────────────────────────────────────
+        tb = tk.Frame(parent, bg=BG2, pady=0)
         tb.pack(fill="x")
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x")
 
-        self.file_lbl = tk.Label(tb, text="📂  Kliknij aby wybrać plik…", font=FS,
-                                  bg=BG3, fg=TXT2, cursor="hand2")
-        self.file_lbl.pack(side="left", padx=12)
-        self.file_lbl.bind("<Button-1>", lambda e: self._pick_file())
-        self.file_lbl.bind("<Enter>",
-            lambda e: self.file_lbl.config(fg=ACCENT))
+        # inner row z paddingiem
+        tb_inner = tk.Frame(tb, bg=BG2)
+        tb_inner.pack(fill="x", padx=16, pady=10)
+
+        # file button — wygląda jak pill
+        self.file_lbl = tk.Button(tb_inner,
+            text="📂  Otwórz plik MDB", font=FS,
+            bg=BG3, fg=TXT2,
+            activebackground=BG4, activeforeground=TXT,
+            relief="flat", padx=14, pady=7,
+            cursor="hand2", command=self._pick_file)
+        self.file_lbl.pack(side="left")
+        self.file_lbl.bind("<Enter>", lambda e: self.file_lbl.config(fg=ACCENT))
         self.file_lbl.bind("<Leave>",
-            lambda e: self.file_lbl.config(
-                fg=A2 if self._mdb_path else TXT2))
-        tk.Frame(tb, bg=BORDER, width=1).pack(side="left", fill="y", padx=8)
+            lambda e: self.file_lbl.config(fg=A2 if self._mdb_path else TXT2))
 
-        tk.Label(tb, text="Okres:", font=FS, bg=BG3, fg=TXT).pack(side="left", padx=(0,6))
+        # separator
+        tk.Frame(tb_inner, bg=BORDER, width=1).pack(side="left", fill="y", padx=14)
+
+        # segmented period control
         self.period_var = tk.StringVar(value=self._cfg.get("default_period","month"))
-        # toggle-przyciski zamiast słabo widocznych radio-buttonów
-        self._btn_all = tk.Button(tb, text="Cały", font=FS,
-                                  relief="flat", padx=12, pady=4, cursor="hand2",
-                                  command=lambda: (self.period_var.set("all"),
-                                                   self._toggle_period()))
-        self._btn_all.pack(side="left", padx=(0,1))
-        self._btn_month = tk.Button(tb, text="Miesiąc", font=FS,
-                                    relief="flat", padx=12, pady=4, cursor="hand2",
-                                    command=lambda: (self.period_var.set("month"),
-                                                     self._toggle_period()))
-        self._btn_month.pack(side="left", padx=(0,6))
+        seg = tk.Frame(tb_inner, bg=BG3)
+        seg.pack(side="left")
+        self._btn_all = tk.Button(seg, text="Cały", font=FS,
+            bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+            relief="flat", padx=14, pady=7, cursor="hand2",
+            command=lambda: (self.period_var.set("all"), self._toggle_period()))
+        self._btn_all.pack(side="left")
+        # divider inside segmented
+        tk.Frame(seg, bg=BORDER, width=1).pack(side="left", fill="y")
+        self._btn_month = tk.Button(seg, text="Miesiąc", font=FS,
+            bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+            relief="flat", padx=14, pady=7, cursor="hand2",
+            command=lambda: (self.period_var.set("month"), self._toggle_period()))
+        self._btn_month.pack(side="left")
 
+        tk.Frame(tb_inner, bg=BG2, width=8).pack(side="left")
+
+        # month / year pickers
         import datetime; now = datetime.datetime.now()
         self.month_var = tk.StringVar(value=MONTHS_PL[now.month-1])
         self.year_var  = tk.StringVar(value=str(now.year))
         style = ttk.Style()
-        style.configure("TB.TCombobox", fieldbackground=BG2, background=BG2,
-                        foreground=TXT, selectbackground=BG3)
-        self.month_cb = ttk.Combobox(tb, textvariable=self.month_var,
+        style.configure("TB.TCombobox", fieldbackground=BG3, background=BG3,
+                        foreground=TXT, selectbackground=BG4, padding=6)
+        self.month_cb = ttk.Combobox(tb_inner, textvariable=self.month_var,
                                       values=MONTHS_PL, state="disabled",
-                                      width=10, font=FS)
-        self.month_cb.pack(side="left", padx=3)
-        self.year_sp = tk.Spinbox(tb, from_=2020, to=2035,
+                                      width=11, font=FS)
+        self.month_cb.pack(side="left", padx=(0,4))
+        self.year_sp = tk.Spinbox(tb_inner, from_=2020, to=2035,
                                    textvariable=self.year_var, width=5, font=FS,
-                                   bg=BG2, fg=TXT,
-                                   buttonbackground=BG3, insertbackground=TXT,
-                                   relief="flat", state="disabled")
-        self.year_sp.pack(side="left", padx=3)
+                                   bg=BG3, fg=TXT, buttonbackground=BG4,
+                                   insertbackground=TXT, relief="flat",
+                                   state="disabled")
+        self.year_sp.pack(side="left")
 
-        tk.Frame(tb, bg=BORDER, width=1).pack(side="left", fill="y", padx=8)
+        # separator
+        tk.Frame(tb_inner, bg=BORDER, width=1).pack(side="left", fill="y", padx=14)
 
-        self.btn = tk.Button(tb, text="▶  Sprawdź", font=FMED,
-                              bg=ACCENT, fg="#111111",
-                              activebackground="#ea7522", activeforeground="#f0f0f0",
-                              relief="flat", padx=16, pady=5,
-                              state="disabled", command=self._run)
-        self.btn.pack(side="left", padx=4)
+        # action buttons
+        self.btn = tk.Button(tb_inner, text="▶  Sprawdź", font=FMED,
+            bg=ACCENT, fg="#18181b",
+            activebackground="#ea6d05", activeforeground="#18181b",
+            relief="flat", padx=18, pady=7,
+            cursor="hand2", state="disabled", command=self._run)
+        self.btn.pack(side="left", padx=(0,6))
 
-        self.export_btn = tk.Button(tb, text="↓  Excel", font=FMED,
-                                     bg=A2, fg="#0a1f14",
-                                     activebackground="#4ade80", activeforeground="#0a1f14",
-                                     relief="flat", padx=12, pady=5,
-                                     state="disabled", command=self._export)
-        self.export_btn.pack(side="left", padx=4)
+        self.export_btn = tk.Button(tb_inner, text="↓  Excel", font=FB,
+            bg=BG3, fg=A2,
+            activebackground=BG4, activeforeground=A2,
+            relief="flat", padx=14, pady=7,
+            cursor="hand2", state="disabled", command=self._export)
+        self.export_btn.pack(side="left")
 
-        self.status_lbl = tk.Label(tb, text="", font=FS, bg=BG3, fg=TXT)
-        self.status_lbl.pack(side="left", padx=10)
+        self.status_lbl = tk.Label(tb_inner, text="", font=FS, bg=BG2, fg=TXT)
+        self.status_lbl.pack(side="left", padx=12)
 
+        # ttk global styles
         style = ttk.Style(self); style.theme_use("clam")
         style.configure("P.Horizontal.TProgressbar",
-                        troughcolor=BG2, background=ACCENT,
-                        bordercolor=BG2, lightcolor=ACCENT, darkcolor=ACCENT)
+                        troughcolor=BG3, background=ACCENT,
+                        bordercolor=BG3, lightcolor=ACCENT, darkcolor=ACCENT)
         style.configure("Treeview",
-            background=BG2, foreground=TXT, fieldbackground=BG2,
-            bordercolor=BORDER, borderwidth=0, rowheight=26,
+            background=BG3, foreground=TXT, fieldbackground=BG3,
+            bordercolor=BORDER, borderwidth=0, rowheight=28,
             font=(_SYS, 9))
         style.configure("Treeview.Heading",
-            background=BG3, foreground=TXT2, relief="flat",
-            font=(_SYS, 9, "bold"), padding=[6, 5])
+            background=BG2, foreground=TXT2, relief="flat",
+            font=(_SYS, 9, "bold"), padding=[8, 6])
         style.map("Treeview",
             background=[("selected", BG4)],
             foreground=[("selected", ACCENT)])
-        self.progress = ttk.Progressbar(tb, style="P.Horizontal.TProgressbar",
-                                         mode="indeterminate", length=160)
+        self.progress = ttk.Progressbar(tb_inner, style="P.Horizontal.TProgressbar",
+                                         mode="indeterminate", length=140)
         self._toggle_period()
         # results area for single tab
 
@@ -1196,15 +1264,17 @@ class App(tk.Tk):
         right = tk.Frame(main, bg=BG)
         right.pack(side="left", fill="both", expand=True)
 
-        self.detail_hdr = tk.Frame(right, bg=BG2, height=52)
+        self.detail_hdr = tk.Frame(right, bg=BG2, height=56)
         self.detail_hdr.pack(fill="x"); self.detail_hdr.pack_propagate(False)
+        tk.Frame(self.detail_hdr, bg=BORDER, width=1).pack(side="left", fill="y")
         self.detail_title = tk.Label(self.detail_hdr,
-            text="← Kliknij sprawdzenie aby zobaczyć szczegóły",
-            font=FMED, bg=BG2, fg=TXT2, padx=16)
-        self.detail_title.pack(side="left", pady=12)
+            text="← Wybierz sprawdzenie",
+            font=FMED, bg=BG2, fg=TXT3, padx=20)
+        self.detail_title.pack(side="left", pady=16)
+        tk.Frame(right, bg=BORDER, height=1).pack(fill="x")
 
         self.tree_frame = tk.Frame(right, bg=BG)
-        self.tree_frame.pack(fill="both", expand=True, padx=8, pady=(0,8))
+        self.tree_frame.pack(fill="both", expand=True, padx=10, pady=(8,8))
 
     def _open_in_single(self, path, month, year):
         """Otwórz bazę z batcha w zakładce Pojedyncza baza i uruchom analizę."""
@@ -1232,17 +1302,14 @@ class App(tk.Tk):
         is_month = self.period_var.get() == "month"
         self.month_cb.config(state="readonly" if is_month else "disabled")
         self.year_sp.config(state="normal"    if is_month else "disabled")
-        # wygląd przycisków — aktywny = wypełniony kolorem akcentu
         self._btn_all.config(
-            bg=BG4    if is_month else ACCENT,
-            fg=TXT2   if is_month else "#111111",
-            activebackground=BG3      if is_month else "#ea7522",
-            activeforeground=TXT      if is_month else "#111111")
+            bg=ACCENT if not is_month else BG3,
+            fg="#18181b" if not is_month else TXT2,
+            activebackground="#ea6d05" if not is_month else BG4)
         self._btn_month.config(
-            bg=ACCENT if is_month else BG4,
-            fg="#111111" if is_month else TXT2,
-            activebackground="#ea7522" if is_month else BG3,
-            activeforeground="#111111" if is_month else TXT)
+            bg=ACCENT if is_month else BG3,
+            fg="#18181b" if is_month else TXT2,
+            activebackground="#ea6d05" if is_month else BG4)
 
     def _open_settings(self):
         SettingsWindow(self, self._cfg, self._on_settings_saved, app_ref=self)
@@ -1259,7 +1326,7 @@ class App(tk.Tk):
         self._mdb_path = entry["path"]
         name  = entry["filename"]
         short = name if len(name) <= 44 else name[:42] + "…"
-        self.file_lbl.config(text=f"🕐  {short}  (historia)", fg=TXT2)
+        self.file_lbl.config(text=f"🕐  {short}  (historia)", fg=TXT2, bg=BG3)
         self.btn.config(state="normal")
         self._clear_all()
 
@@ -1290,8 +1357,8 @@ class App(tk.Tk):
         if not path: return
         self._mdb_path = path
         name = os.path.basename(path)
-        short = name if len(name)<=44 else name[:42]+"…"
-        self.file_lbl.config(text=f"📂  {short}", fg=A2)
+        short = name if len(name)<=38 else name[:36]+"…"
+        self.file_lbl.config(text=f"📂  {short}", fg=A2, bg=BG3)
         self.btn.config(state="normal")
         self._clear_all()
 
@@ -1367,22 +1434,23 @@ class App(tk.Tk):
         # summary strip
         s = res.get("summary",{})
         if s:
-            sb = tk.Frame(self.list_frame, bg=BG2, pady=4)
-            sb.pack(fill="x", pady=(0,10), padx=2)
+            sb = tk.Frame(self.list_frame, bg=BG)
+            sb.pack(fill="x", pady=(4,12), padx=4)
             metrics = [
                 ("KSeF",     s.get("ksef_total","?"), ACCENT),
                 ("Zakupy",   s.get("ksef_zakup","?"),  A2),
-                ("Sprzedaż", s.get("ksef_sprz","?"),   TXT),
-                ("Księga",   s.get("ksiega","?"),       TXT),
-                ("VAT zak.", s.get("vatzakupy","?"),    TXT),
+                ("Sprzedaż", s.get("ksef_sprz","?"),   TXT2),
+                ("Księga",   s.get("ksiega","?"),       TXT2),
+                ("VAT zak.", s.get("vatzakupy","?"),    TXT2),
             ]
             for lbl, val, chip_fg in metrics:
-                chip = tk.Frame(sb, bg=BG4)
-                chip.pack(side="left", padx=(0,6), pady=4)
-                tk.Label(chip, text=str(val), font=("Consolas",13,"bold"),
-                         bg=BG4, fg=chip_fg, padx=12, pady=2).pack()
-                tk.Label(chip, text=lbl, font=(_SYS,8),
-                         bg=BG4, fg=TXT3, padx=12, pady=3).pack()
+                chip = tk.Frame(sb, bg=BG3)
+                chip.pack(side="left", padx=(0,6), pady=2)
+                tk.Label(chip, text=str(val),
+                         font=(FMONO, 15, "bold") if val != "?" else (_SYS,14,"bold"),
+                         bg=BG3, fg=chip_fg, padx=14, pady=6).pack()
+                tk.Label(chip, text=lbl, font=(_SYS, 8),
+                         bg=BG3, fg=TXT3, padx=14, pady=4).pack()
 
         # check cards — grouped by category
         self._checks = res.get("checks",[])
@@ -1406,18 +1474,21 @@ class App(tk.Tk):
 
             # ── category header ───────────────────────────────────────────
             cat_hdr = tk.Frame(self.list_frame, bg=BG)
-            cat_hdr.pack(fill="x", padx=2, pady=(10,1))
-            tk.Frame(cat_hdr, bg=cat_col, height=1).pack(fill="x")
+            cat_hdr.pack(fill="x", padx=4, pady=(14,2))
             row_hdr = tk.Frame(cat_hdr, bg=BG)
-            row_hdr.pack(fill="x", pady=(3,0))
+            row_hdr.pack(fill="x")
             tk.Label(row_hdr, text=cat_name.upper(),
-                     font=("Consolas",8,"bold"), bg=BG, fg=cat_col).pack(side="left", padx=4)
+                     font=(_SYS, 8, "bold"), bg=BG, fg=cat_col,
+                     padx=0).pack(side="left")
+            # linia po nazwie kategorii
+            tk.Frame(row_hdr, bg=BORDER, height=1).pack(
+                side="left", fill="x", expand=True, padx=8)
             if n_err or n_warn:
                 badge_txt = "  ".join(
                     ([f"✗ {n_err}"] if n_err else []) +
                     ([f"⚠ {n_warn}"] if n_warn else []))
                 tk.Label(row_hdr, text=badge_txt,
-                         font=("Consolas",8), bg=BG, fg=cat_col).pack(side="right", padx=4)
+                         font=(_SYS, 8, "bold"), bg=BG, fg=cat_col).pack(side="right")
 
             # ── cards in this category ────────────────────────────────────
             for i, chk in items:
@@ -1428,37 +1499,38 @@ class App(tk.Tk):
                 card = tk.Frame(self.list_frame, bg=BG,
                                 highlightbackground=col if chk["kind"]!="ok" else BORDER,
                                 highlightthickness=1, cursor="hand2")
-                card.pack(fill="x", pady=2, padx=2)
+                card.pack(fill="x", pady=2, padx=4)
 
-                # left accent strip
-                strip = tk.Frame(card, bg=col if chk["kind"]!="ok" else BG4, width=4)
+                # left accent strip — grubszy dla błędów/ostrzeżeń
+                strip_w = 4 if chk["kind"]=="ok" else 4
+                strip = tk.Frame(card, bg=col if chk["kind"]!="ok" else BG4, width=strip_w)
                 strip.pack(side="left", fill="y")
                 setattr(self, f"_strip_{i}", strip)
 
                 # content area
                 inner = tk.Frame(card, bg=card_bg)
-                inner.pack(side="left", fill="both", expand=True, padx=(10,10), pady=8)
+                inner.pack(side="left", fill="both", expand=True, padx=(12,12), pady=10)
 
                 top = tk.Frame(inner, bg=card_bg)
                 top.pack(fill="x")
 
-                lbl_icon = tk.Label(top, text=icon, font=(_SYS,10,"bold"),
+                lbl_icon = tk.Label(top, text=icon, font=(_SYS,11,"bold"),
                                     bg=card_bg, fg=col, width=2)
                 lbl_icon.pack(side="left")
-                lbl_title = tk.Label(top, text=chk["title"], font=(_SYS,10,"bold"),
+                lbl_title = tk.Label(top, text=chk["title"], font=(_SYS,11,"bold"),
                                      bg=card_bg, fg=TXT if chk["kind"]=="ok" else col,
                                      anchor="w")
                 lbl_title.pack(side="left", fill="x", expand=True)
 
                 if n:
                     badge_bg = col if chk["kind"]!="ok" else BG4
-                    badge_fg = "#1a1520" if chk["kind"]!="ok" else TXT3
-                    tk.Label(top, text=f" {n} ", font=("Consolas",9,"bold"),
-                             bg=badge_bg, fg=badge_fg).pack(side="right", padx=(4,0))
+                    badge_fg = "#18181b" if chk["kind"]!="ok" else TXT3
+                    tk.Label(top, text=f"  {n}  ", font=(FMONO, 9, "bold"),
+                             bg=badge_bg, fg=badge_fg).pack(side="right", padx=(6,0))
 
                 if chk.get("detail"):
-                    tk.Label(inner, text=chk["detail"], font=(_SYS,9),
-                             bg=card_bg, fg=TXT2, anchor="w").pack(fill="x", pady=(3,0))
+                    tk.Label(inner, text=chk["detail"], font=(_SYS, 9),
+                             bg=card_bg, fg=TXT3, anchor="w").pack(fill="x", pady=(4,0))
 
                 # hover — check bounds to avoid flicker between child widgets
                 def _hover_on(e, _in=inner, _tp=top, _bg=BG_HOVER):
@@ -1538,7 +1610,7 @@ class App(tk.Tk):
         tk.Label(count_row, text="Znaleziono:", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
         tk.Label(count_row, text=f" {len(rows)} ", font=("Consolas",9,"bold"),
                  bg=WARN if chk["kind"]=="warning" else (ERR if chk["kind"]=="error" else OK),
-                 fg="#111111").pack(side="left", padx=4)
+                 fg="#18181b").pack(side="left", padx=4)
         tk.Label(count_row, text="wierszy", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
 
         cols = list(rows[0].keys())
@@ -1600,7 +1672,11 @@ class App(tk.Tk):
             self.status_lbl.config(
                 text=f"✓ Zapisano: {os.path.basename(path)}", fg=OK)
         except Exception as ex:
-            self.status_lbl.config(text=f"✗ Błąd: {ex}", fg=ERR)
+            import traceback
+            self.status_lbl.config(text=f"✗ Błąd eksportu", fg=ERR)
+            from tkinter import messagebox
+            messagebox.showerror("Błąd eksportu Excel",
+                                 f"{ex}\n\n{traceback.format_exc()[-600:]}")
 
 
 # ── Excel export ──────────────────────────────────────────────────────────────
@@ -1610,195 +1686,163 @@ def _export_excel(res, mdb_path, save_path):
     from openpyxl.utils import get_column_letter
     import os, datetime
 
+    problems = [c for c in res.get("checks", []) if c["kind"] in ("error", "warning")]
+
     wb = Workbook()
     wb.remove(wb.active)
 
+    SF  = "Segoe UI"
     def fill(h): return PatternFill("solid", fgColor=h)
-    def font(h, bold=False, size=9): return Font(name="Consolas", color=h, bold=bold, size=size)
-    thin = Side(style="thin", color="2a2f45")
+    def fnt(h, bold=False, sz=9): return Font(name=SF, color=h, bold=bold, size=sz)
+    thin = Side(style="thin", color="dddddd")
     brd  = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ERR_C, WARN_C, HEAD_C = "C0392B", "E67E22", "2C3E50"
 
-    kind_map = {
-        "ok":      ("2dd4a0","1e3a2f","✓"),
-        "warning": ("f5a623","3a2e10","⚠"),
-        "error":   ("f75f5f","3a1010","✗"),
-    }
+    s   = res.get("summary", {})
+    now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-    # ── Podsumowanie ──────────────────────────────────────────────────────
-    ws = wb.create_sheet("Podsumowanie")
+    # ══════════════════════════════════════════════════════════════════════
+    # Arkusz 1 — Podsumowanie problemów
+    # ══════════════════════════════════════════════════════════════════════
+    ws = wb.create_sheet("Raport")
     ws.sheet_view.showGridLines = False
-    ws.column_dimensions["A"].width = 44
-    ws.column_dimensions["B"].width = 22
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
 
-    for row_data, fgc, bgc in [
-        (f"KSeF Checker — Raport weryfikacji", "2dd4a0", "0d1a2e"),
-        (f"Baza: {os.path.basename(mdb_path)}", "8b90a8", "0d1a2e"),
-        (f"Okres: {res.get('period','?')}",     "8b90a8", "0d1a2e"),
-        (f"Wygenerowano: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}", "8b90a8", "0d1a2e"),
-    ]:
-        r = ws.max_row + (1 if ws.max_row > 1 else 0)
-        ws.cell(r, 1, row_data).font = font(fgc, bold=(fgc=="2dd4a0"), size=12 if fgc=="2dd4a0" else 9)
-        ws.cell(r, 1).fill = fill(bgc)
-        ws.cell(r, 2).fill = fill(bgc)
-        ws.merge_cells(f"A{r}:B{r}")
+    # Nagłówek
+    ws.merge_cells("A1:F1")
+    ws["A1"] = f"KSeF Checker — {os.path.basename(mdb_path)}   |   {res.get('period','?')}   |   {now}"
+    ws["A1"].font = Font(name=SF, color="FFFFFF", bold=True, size=11)
+    ws["A1"].fill = fill("1a1a1a")
+    ws["A1"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[1].height = 26
 
-    ws.append([])
-    s = res.get("summary",{})
-    ws.cell(ws.max_row+1, 1, "Statystyki").font = font("2dd4a0", bold=True)
-    ws.cell(ws.max_row, 1).fill = fill("1e3a2f")
-    ws.cell(ws.max_row, 2).fill = fill("1e3a2f")
-    for lbl, val in [
-        ("KSeF dokumenty pobrane", s.get("ksef_total","?")),
-        ("  z czego zakupy",       s.get("ksef_zakup","?")),
-        ("  z czego sprzedaż",     s.get("ksef_sprz","?")),
-        ("Wpisy w KSIEGA",         s.get("ksiega","?")),
-        ("Wpisy w VATZAKUPY",      s.get("vatzakupy","?")),
-        ("Wpisy w VATSPRZEDAZ",    s.get("vatsprzedaz","?")),
-        ("Zakres dat",             f"{s.get('date_from','?')} – {s.get('date_to','?')}"),
-    ]:
-        r = ws.max_row + 1
-        ws.cell(r, 1, lbl).font = font("e8eaf0")
-        ws.cell(r, 2, str(val)).font = font("2dd4a0", bold=True)
-        ws.cell(r, 2).alignment = Alignment(horizontal="right")
+    # Statystyki w jednej linii
+    ws.merge_cells("A2:F2")
+    n_err  = sum(1 for c in problems if c["kind"] == "error")
+    n_warn = sum(1 for c in problems if c["kind"] == "warning")
+    stat = f"Błędy: {n_err}   Ostrzeżenia: {n_warn}   |   KSeF: {s.get('ksef_total','?')}   Zakupy: {s.get('ksef_zakup','?')}   Sprzedaż: {s.get('ksef_sprz','?')}   Księga: {s.get('ksiega','?')}   VAT zak.: {s.get('vatzakupy','?')}"
+    ws["A2"] = stat
+    ws["A2"].font = Font(name=SF, color="a0a0a0", size=8)
+    ws["A2"].fill = fill("2a2a2a")
+    ws["A2"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[2].height = 16
 
-    ws.append([])
-    r = ws.max_row + 1
-    ws.cell(r, 1, "Wyniki sprawdzeń").font = font("e8eaf0", bold=True)
-    ws.cell(r, 1).fill = fill("0d1a2e")
-    ws.cell(r, 2, "Wierszy").font = font("e8eaf0", bold=True)
-    ws.cell(r, 2).fill = fill("0d1a2e")
-    ws.cell(r, 2).alignment = Alignment(horizontal="right")
+    if not problems:
+        ws.merge_cells("A4:F4")
+        ws["A4"] = "✓  Brak błędów i ostrzeżeń — baza spójna."
+        ws["A4"].font = Font(name=SF, color="27AE60", bold=True, size=11)
+        wb.save(save_path)
+        return
 
-    for chk in res.get("checks",[]):
-        fgc, bgc, icon = kind_map.get(chk["kind"],("e8eaf0","181c27","·"))
-        r = ws.max_row + 1
-        ws.cell(r, 1, f"{icon}  {chk['title']}").font = font(fgc, bold=(chk["kind"]!="ok"))
-        ws.cell(r, 1).fill = fill(bgc)
-        n = len(chk.get("rows",[]))
-        ws.cell(r, 2, n if n else "—").font = font(fgc, bold=True)
-        ws.cell(r, 2).fill = fill(bgc)
-        ws.cell(r, 2).alignment = Alignment(horizontal="right")
-        if chk.get("detail"):
-            r2 = ws.max_row + 1
-            ws.cell(r2, 1, f"    {chk['detail']}").font = font("8b90a8", size=8)
+    # Nagłówki tabeli
+    cols_hdr = ["", "Typ", "Problem", "Liczba rekordów", "Szczegóły", "Wyjaśnienie"]
+    col_w    = [4,   10,   52,         16,                48,           52]
+    for j, (h, w) in enumerate(zip(cols_hdr, col_w), 1):
+        c = ws.cell(4, j, h)
+        c.font      = Font(name=SF, color="FFFFFF", bold=True, size=9)
+        c.fill      = fill(HEAD_C)
+        c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        c.border    = brd
+        ws.column_dimensions[get_column_letter(j)].width = w
+    ws.row_dimensions[4].height = 18
 
-    # ── Per-check sheets ──────────────────────────────────────────────────
-    for chk in res.get("checks",[]):
-        rows = chk.get("rows",[])
-        title = chk["title"][:28].strip()
-        for ch in ["\\","/","[","]","*","?",":"]: title = title.replace(ch,"")
-        ws2 = wb.create_sheet(title)
+    for i, chk in enumerate(problems, 1):
+        r   = i + 4
+        fc  = ERR_C if chk["kind"] == "error" else WARN_C
+        ic  = "✗" if chk["kind"] == "error" else "⚠"
+        bg  = "FFF5F5" if chk["kind"] == "error" else "FFFBF0"
+        n   = len(chk.get("rows", []))
+
+        for j in range(1, 7):
+            ws.cell(r, j).fill   = fill(bg)
+            ws.cell(r, j).border = brd
+            ws.cell(r, j).alignment = Alignment(vertical="center", indent=1, wrap_text=(j in (3,5,6)))
+
+        ws.cell(r, 1, ic).font  = Font(name=SF, color=fc, bold=True, size=11)
+        ws.cell(r, 1).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(r, 2, "BŁĄD" if chk["kind"]=="error" else "OSTRZEŻENIE").font = Font(name=SF, color=fc, bold=True, size=8)
+        ws.cell(r, 3, chk["title"]).font = Font(name=SF, color="1a1a1a", bold=True, size=9)
+        ws.cell(r, 4, n if n else "—").font = Font(name=SF, color=fc, bold=True, size=9)
+        ws.cell(r, 4).alignment = Alignment(horizontal="center", vertical="center")
+        ws.cell(r, 5, chk.get("detail","")).font = Font(name=SF, color="444444", size=8)
+        ws.cell(r, 6, chk.get("explanation","")).font = Font(name=SF, color="666666", size=8)
+        ws.row_dimensions[r].height = 20
+
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:F{4 + len(problems)}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Arkusz 2 — Szczegóły (wiersze z błędami)
+    # ══════════════════════════════════════════════════════════════════════
+    chks_with_rows = [c for c in problems if c.get("rows")]
+    if chks_with_rows:
+        ws2 = wb.create_sheet("Szczegóły")
         ws2.sheet_view.showGridLines = False
-        fgc, bgc, icon = kind_map.get(chk["kind"],("e8eaf0","181c27","·"))
+        ws2.sheet_properties.pageSetUpPr.fitToPage = True
+        ws2.page_setup.fitToWidth = 1
 
-        ws2["A1"] = f"{icon}  {chk['title']}"
-        ws2["A1"].font = Font(name="Consolas", color=fgc, bold=True, size=10)
-        ws2["A1"].fill = fill(bgc)
-        if chk.get("detail"):
-            ws2["A2"] = chk["detail"]
-            ws2["A2"].font = font("8b90a8", size=8)
-            ws2["A2"].fill = fill("0d1a2e")
-        if chk.get("explanation"):
-            ws2["A3"] = chk["explanation"]
-            ws2["A3"].font = font("8b90a8", size=8)
-            ws2["A3"].fill = fill("0d1a2e")
+        cur_row = 1
+        for chk in chks_with_rows:
+            fc  = ERR_C if chk["kind"] == "error" else WARN_C
+            ic  = "✗" if chk["kind"] == "error" else "⚠"
+            rows = chk.get("rows", [])
+            cols = list(rows[0].keys()) if rows else []
+            ncols = max(len(cols), 1)
 
-        if not rows:
-            ws2["A4"] = "✓ Brak nieprawidłowości."
-            ws2["A4"].font = font("2dd4a0", bold=True)
-            ws2.column_dimensions["A"].width = 50
-            continue
+            # sekcja nagłówkowa
+            ws2.merge_cells(start_row=cur_row, start_column=1,
+                            end_row=cur_row, end_column=ncols)
+            c = ws2.cell(cur_row, 1, f"{ic}  {chk['title']}  ({len(rows)} rekordów)")
+            c.font = Font(name=SF, color="FFFFFF", bold=True, size=10)
+            c.fill = fill(fc.replace("C0392B","8B0000").replace("E67E22","CC5200"))
+            c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            ws2.row_dimensions[cur_row].height = 20
+            cur_row += 1
 
-        cols = list(rows[0].keys())
-        if len(cols) > 1:
-            for rn in [1,2,3]:
-                try: ws2.merge_cells(start_row=rn,start_column=1,end_row=rn,end_column=len(cols))
-                except: pass
+            if not cols:
+                cur_row += 1
+                continue
 
-        sr = 5
-        for j, c in enumerate(cols, 1):
-            cell = ws2.cell(sr, j, c)
-            cell.font  = Font(name="Consolas", color="2dd4a0", bold=True, size=9)
-            cell.fill  = fill("1e3a2f")
-            cell.border = brd
-            cell.alignment = Alignment(horizontal="left")
+            # nagłówki kolumn
+            for j, col in enumerate(cols, 1):
+                c = ws2.cell(cur_row, j, col)
+                c.font = Font(name=SF, color="FFFFFF", bold=True, size=8)
+                c.fill = fill(HEAD_C)
+                c.border = brd
+                c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            ws2.row_dimensions[cur_row].height = 16
+            cur_row += 1
 
-        for i, row in enumerate(rows):
-            bg = "181c27" if i%2==0 else "1e2335"
-            for j, c in enumerate(cols, 1):
-                val = row.get(c,"") or ""
-                try: val = float(val.replace(",","")) if val.replace(",","").replace(".","").replace("-","").isdigit() else val
-                except: pass
-                cell = ws2.cell(sr+1+i, j, val)
-                cell.font   = font("e8eaf0")
-                cell.fill   = fill(bg)
-                cell.border = brd
-                if isinstance(val, float):
-                    cell.number_format = "#,##0.00"
-                    cell.alignment = Alignment(horizontal="right")
+            # dane
+            for ri, row in enumerate(rows):
+                bg = "FFFFFF" if ri % 2 == 0 else "F7F7F7"
+                for j, col in enumerate(cols, 1):
+                    val = row.get(col, "") or ""
+                    try:
+                        val = float(val.replace(",","")) \
+                            if val.replace(",","").replace(".","").replace("-","").isdigit() else val
+                    except Exception:
+                        pass
+                    c = ws2.cell(cur_row, j, val)
+                    c.font   = Font(name=SF, color="1a1a1a", size=8)
+                    c.fill   = fill(bg)
+                    c.border = brd
+                    if isinstance(val, float):
+                        c.number_format = "#,##0.00"
+                        c.alignment = Alignment(horizontal="right", vertical="center")
+                    else:
+                        c.alignment = Alignment(vertical="center", indent=1)
+                ws2.row_dimensions[cur_row].height = 15
+                cur_row += 1
 
-        for j, c in enumerate(cols, 1):
-            w = max(len(str(c)), max((len(str(r.get(c,"")or"")) for r in rows[:500]),default=0))
-            ws2.column_dimensions[get_column_letter(j)].width = min(w+4, 55)
+            # auto szerokość
+            for j, col in enumerate(cols, 1):
+                w = max(len(str(col)),
+                        max((len(str(r.get(col,"") or "")) for r in rows[:200]), default=0))
+                ws2.column_dimensions[get_column_letter(j)].width = min(w + 3, 50)
 
-    # ── Do sprawdzenia (checklist for client) ────────────────────────────
-    problems = [c for c in res.get("checks",[]) if c["kind"] in ("error","warning") and c.get("rows")]
-    if problems:
-        ws_todo = wb.create_sheet("✉ Do sprawdzenia", 0)  # first sheet
-        ws_todo.sheet_view.showGridLines = False
-        ws_todo.column_dimensions["A"].width = 6
-        ws_todo.column_dimensions["B"].width = 38
-        ws_todo.column_dimensions["C"].width = 18
-        ws_todo.column_dimensions["D"].width = 16
-        ws_todo.column_dimensions["E"].width = 50
-
-        # header
-        for col, txt in [(1,""), (2,"Problem"), (3,"Kategoria"), (4,"Liczba"), (5,"Szczegóły")]:
-            cell = ws_todo.cell(1, col, txt)
-            cell.font = Font(name="Segoe UI", color="f0f0f0", bold=True, size=10)
-            cell.fill = fill("2a2a2a")
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-        ws_todo.row_dimensions[1].height = 22
-
-        # title above
-        ws_todo.insert_rows(1)
-        ws_todo.cell(1,1, f"Lista do weryfikacji — {os.path.basename(mdb_path)} — {res.get('period','?')}  |  Wygenerowano: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}")
-        ws_todo.cell(1,1).font = Font(name="Segoe UI", color="fb923c", bold=True, size=11)
-        ws_todo.cell(1,1).fill = fill("1a1a1a")
-        ws_todo.merge_cells("A1:E1")
-        ws_todo.row_dimensions[1].height = 24
-
-        kind_icon = {"error":"✗","warning":"⚠"}
-        kind_color = {"error":"f87171","warning":"fbbf24"}
-
-        for i, chk in enumerate(problems, 1):
-            row = i + 2
-            ic = kind_icon.get(chk["kind"],"·")
-            bg = "222222" if i%2==0 else "1a1a1a"
-            fc = kind_color.get(chk["kind"],"f0f0f0")
-
-            ws_todo.cell(row, 1, ic).font = Font(name="Segoe UI", color=fc, bold=True, size=11)
-            ws_todo.cell(row, 1).fill = fill(bg)
-            ws_todo.cell(row, 1).alignment = Alignment(horizontal="center", vertical="center")
-
-            ws_todo.cell(row, 2, chk["title"]).font = Font(name="Segoe UI", color=fc, bold=True, size=9)
-            ws_todo.cell(row, 2).fill = fill(bg)
-
-            ws_todo.cell(row, 3, chk["kind"].upper()).font = Font(name="Segoe UI", color=fc, size=9)
-            ws_todo.cell(row, 3).fill = fill(bg)
-
-            ws_todo.cell(row, 4, len(chk.get("rows",[]))).font = Font(name="Segoe UI", color="a0a0a0", size=9)
-            ws_todo.cell(row, 4).fill = fill(bg)
-            ws_todo.cell(row, 4).alignment = Alignment(horizontal="center")
-
-            exp = chk.get("explanation","") or chk.get("detail","")
-            ws_todo.cell(row, 5, exp[:120]).font = Font(name="Segoe UI", color="a0a0a0", size=8)
-            ws_todo.cell(row, 5).fill = fill(bg)
-            ws_todo.row_dimensions[row].height = 18
-
-        # checkbox column hint
-        ws_todo.cell(2, 1).value = "Status"
-        ws_todo.cell(2, 1).font = Font(name="Segoe UI", color="606060", size=8)
+            cur_row += 1  # odstęp między sekcjami
 
     wb.save(save_path)
 
