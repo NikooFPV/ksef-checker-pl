@@ -310,7 +310,7 @@ class SettingsWindow(tk.Toplevel):
                 cfg_module.save(self._cfg)
             except Exception:
                 self.after(0, lambda: (
-                    self._upd_lbl.config(text="Brak połączenia z internetem", fg=ERR),
+                    self._upd_lbl.config(text=f"Błąd: {type(e).__name__} — {str(e)[:60]}", fg=ERR),
                     self._upd_btn.config(state="normal")
                 ))
         threading.Thread(target=worker, daemon=True).start()
