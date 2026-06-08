@@ -773,39 +773,51 @@ def _export_batch_excel(results, save_path):
 
 # ── okno pobierania aktualizacji ─────────────────────────────────────────────
 class UpdateDialog(tk.Toplevel):
+    """
+    Fazy:
+      1. Pobieranie  — pasek postępu + MB/MB
+      2. Instalacja  — indeterminate + "Instaluję..."
+      3. Gotowe      — komunikat + przycisk "Uruchom ponownie"
+    Aplikacja NIE zamyka się dopóki użytkownik nie kliknie "Uruchom ponownie".
+    """
     def __init__(self, parent, app_root, version, installer_url):
         super().__init__(parent)
         self.title(f"Aktualizacja do {version}")
-        self.geometry("440x170")
+        self.geometry("460x200")
         self.configure(bg=BG)
         self.resizable(False, False)
         self.grab_set()
-        self._app_root     = app_root
-        self._version      = version
+        self._app_root      = app_root
+        self._version       = version
         self._installer_url = installer_url
-        self._cancelled    = False
+        self._cancelled     = False
         self._build()
         self.lift(); self.focus_force()
         threading.Thread(target=self._download, daemon=True).start()
 
     def _build(self):
-        tk.Label(self, text=f"Pobieranie KSeF Checker {self._version}",
-                 font=FMED, bg=BG, fg=TXT, pady=14).pack()
+        tk.Label(self, text=f"Aktualizacja  →  KSeF Checker {self._version}",
+                 font=FMED, bg=BG, fg=TXT, pady=16).pack()
+
         style = ttk.Style(self)
         style.configure("U.Horizontal.TProgressbar",
                         troughcolor=BG3, background=ACCENT,
                         bordercolor=BG3, lightcolor=ACCENT, darkcolor=ACCENT)
         self._prog = ttk.Progressbar(self, style="U.Horizontal.TProgressbar",
-                                      length=380, mode="determinate")
-        self._prog.pack(padx=30)
+                                      length=400, mode="determinate")
+        self._prog.pack(padx=28)
+
         self._lbl = tk.Label(self, text="Łączę z serwerem…",
                              font=FSM, bg=BG, fg=TXT2)
         self._lbl.pack(pady=10)
-        tk.Button(self, text="Anuluj", font=FSM,
-                  bg=BG3, fg=TXT, activebackground=BG4,
-                  relief="flat", padx=12, pady=4,
-                  command=self._cancel).pack()
 
+        self._btn = tk.Button(self, text="Anuluj", font=FSM,
+                              bg=BG3, fg=TXT, activebackground=BG4,
+                              relief="flat", padx=14, pady=5,
+                              command=self._cancel)
+        self._btn.pack()
+
+    # ── faza 1: pobieranie ────────────────────────────────────────────────
     def _download(self):
         import urllib.request, tempfile
         try:
@@ -814,48 +826,60 @@ class UpdateDialog(tk.Toplevel):
             tmp.close()
 
             def on_progress(count, block, total):
-                if self._cancelled:
-                    raise Exception("Anulowano")
+                if self._cancelled: raise Exception("Anulowano")
                 if total > 0:
                     pct  = min(100, count * block * 100 // total)
                     done = count * block / 1048576
                     tot  = total / 1048576
                     self.after(0, lambda p=pct, d=done, t=tot: (
                         self._prog.config(value=p),
-                        self._lbl.config(text=f"{d:.1f} MB / {t:.1f} MB")))
+                        self._lbl.config(text=f"Pobieranie…  {d:.1f} MB / {t:.1f} MB")))
 
             urllib.request.urlretrieve(self._installer_url, tmp_path, on_progress)
-
-            self.after(0, lambda: (
-                self._lbl.config(
-                    text="Pobrano! Aplikacja zaraz się zamknie.\nUruchom ją ponownie po zakończeniu instalacji.", fg=OK),
-                self._prog.config(value=100)
-            ))
-            self.after(2000, lambda: self._run_installer(tmp_path))
+            self.after(0, lambda: self._start_install(tmp_path))
 
         except Exception as e:
             if not self._cancelled:
-                self.after(0, lambda: self._lbl.config(
-                    text=f"Błąd: {e}", fg=ERR))
+                self.after(0, lambda: self._lbl.config(text=f"Błąd: {e}", fg=ERR))
 
-    def _run_installer(self, path):
-        import subprocess, tempfile, time
-        bat = os.path.join(tempfile.gettempdir(), "ksef_update.bat")
-        with open(bat, "w", encoding="utf-8") as f:
-            f.write(
-                "@echo off\n"
-                "timeout /t 3 /nobreak >nul\n"
-                f'"{path}" /VERYSILENT /NORESTART\n'
-                f'del "{bat}"\n'
-            )
-        subprocess.Popen(
-            ["cmd", "/c", bat],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
-            close_fds=True
-        )
-        # os._exit omija atexit PyInstallera — temp folder NIE jest usuwany
-        # dzięki temu nowy proces nie dostaje błędu "DLL not found"
-        time.sleep(0.3)
+    # ── faza 2: instalacja w tle ──────────────────────────────────────────
+    def _start_install(self, installer_path):
+        self._lbl.config(text="Instaluję…  (program pozostaje otwarty)", fg=TXT2)
+        self._prog.config(mode="indeterminate", value=0)
+        self._prog.start(12)
+        self._btn.config(state="disabled", text="Proszę czekać…")
+
+        import subprocess
+
+        def run():
+            try:
+                proc = subprocess.Popen(
+                    [installer_path, "/VERYSILENT", "/NORESTART"],
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                proc.wait()
+                self.after(0, self._install_done)
+            except Exception as e:
+                self.after(0, lambda: self._lbl.config(text=f"Błąd instalacji: {e}", fg=ERR))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    # ── faza 3: gotowe ────────────────────────────────────────────────────
+    def _install_done(self):
+        self._prog.stop()
+        self._prog.config(mode="determinate", value=100)
+        self._lbl.config(
+            text=f"✓  KSeF Checker {self._version} został zainstalowany.", fg=OK)
+        self._btn.config(
+            state="normal",
+            text="🔄  Uruchom ponownie",
+            bg=ACCENT, fg="#18181b",
+            activebackground="#ea6d05",
+            command=self._restart)
+
+    def _restart(self):
+        """Zamknij aplikację — nowa wersja uruchomi się ze skrótu/taskbara."""
+        import time
+        time.sleep(0.2)
         os._exit(0)
 
     def _cancel(self):
