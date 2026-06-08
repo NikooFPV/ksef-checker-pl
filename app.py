@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "1.3.0"
+VERSION     = "1.5.0"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
