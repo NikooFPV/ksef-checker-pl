@@ -103,20 +103,21 @@ def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None, qua
         if progress_cb: progress_cb(msg)
     prog("Łączę z bazą…")
     conn = open_connection(mdb_path)
-    prog("Odczytuję strukturę…")
-    tables = list_tables(conn)
-    for req in ["_KSEF_DOCUMENT","KSIEGA","VATZAKUPY"]:
-        if req not in tables:
-            conn.close()
-            return {"status":"error","checks":[{"kind":"error",
-                "title":f"Nieobsługiwany format bazy — brak tabeli {req}.",
-                "detail":"","rows":[],"explanation":""}],"summary":{},"period":"?"}
-    prog("Wczytuję dane…")
-    ksef   = read_table(conn, "_KSEF_DOCUMENT")
-    ksiega = read_table(conn, "KSIEGA")
-    vat    = read_table(conn, "VATZAKUPY")
-    vatsp  = read_table(conn, "VATSPRZEDAZ") if "VATSPRZEDAZ" in tables else None
-    conn.close()
+    try:
+        prog("Odczytuję strukturę…")
+        tables = list_tables(conn)
+        for req in ["_KSEF_DOCUMENT","KSIEGA","VATZAKUPY"]:
+            if req not in tables:
+                return {"status":"error","checks":[{"kind":"error",
+                    "title":f"Nieobsługiwany format bazy — brak tabeli {req}.",
+                    "detail":"","rows":[],"explanation":""}],"summary":{},"period":"?"}
+        prog("Wczytuję dane…")
+        ksef   = read_table(conn, "_KSEF_DOCUMENT")
+        ksiega = read_table(conn, "KSIEGA")
+        vat    = read_table(conn, "VATZAKUPY")
+        vatsp  = read_table(conn, "VATSPRZEDAZ") if "VATSPRZEDAZ" in tables else None
+    finally:
+        conn.close()  # zawsze zamknij — nawet przy błędzie (usuwa pliki .dat)
     if ksef is None or ksiega is None or vat is None:
         return {"status":"error","checks":[{"kind":"error","title":"Błąd odczytu tabel.",
             "detail":"","rows":[],"explanation":""}],"summary":{},"period":"?"}
