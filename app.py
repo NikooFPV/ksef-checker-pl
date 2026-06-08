@@ -27,12 +27,39 @@ def _logo_photoimage(b64: str):
 _CAT_MAP  = {cid: cat for cid, _, cat, _ in ALL_CHECKS}
 _CAT_ORDER = list(dict.fromkeys(cat for _, _, cat, _ in ALL_CHECKS))
 
-# ── colours ──────────────────────────────────────────────────────────────────
-# Zinc dark (Tailwind) + orange accent — VS Code / Linear style
-BG    = "#18181b"; BG2 = "#25252f"; BG3 = "#272730"; BG4 = "#313139"
+# ── palety motywów ───────────────────────────────────────────────────────────
+THEMES = {
+    "dark": {
+        "BG":"#18181b","BG2":"#1f1f23","BG3":"#272730","BG4":"#313139",
+        "BORDER":"#2e2e38","BG_HOVER":"#25252f",
+        "TXT":"#fafafa","TXT2":"#a1a1aa","TXT3":"#52525b",
+        "CARD_ERR":"#231010","CARD_WARN":"#251d08",
+        "THEME_ICON":"☀️","THEME_LABEL":"Jasny",
+    },
+    "light": {
+        "BG":"#f6f8fa","BG2":"#ffffff","BG3":"#f0f2f4","BG4":"#e6e8eb",
+        "BORDER":"#d0d7de","BG_HOVER":"#eaeef2",
+        "TXT":"#24292f","TXT2":"#57606a","TXT3":"#8c959f",
+        "CARD_ERR":"#fff1f2","CARD_WARN":"#fffbeb",
+        "THEME_ICON":"🌙","THEME_LABEL":"Ciemny",
+    },
+}
+
+# ── aktywna paleta (aktualizowana przez apply_theme) ─────────────────────────
+BG    = "#18181b"; BG2 = "#1f1f23"; BG3 = "#272730"; BG4 = "#313139"
 ACCENT= "#f97316"; A2  = "#22c55e"; WARN= "#eab308"; ERR = "#ef4444"
 OK    = "#22c55e"; TXT = "#fafafa"; TXT2= "#a1a1aa"; TXT3= "#52525b"
 BORDER= "#2e2e38"; BG_HOVER = "#25252f"
+CARD_ERR = "#231010"; CARD_WARN = "#251d08"
+
+def apply_theme(name: str):
+    """Zaktualizuj globalne zmienne kolorów wg wybranego motywu."""
+    global BG,BG2,BG3,BG4,BORDER,BG_HOVER,TXT,TXT2,TXT3,CARD_ERR,CARD_WARN
+    t = THEMES.get(name, THEMES["dark"])
+    BG=t["BG"]; BG2=t["BG2"]; BG3=t["BG3"]; BG4=t["BG4"]
+    BORDER=t["BORDER"]; BG_HOVER=t["BG_HOVER"]
+    TXT=t["TXT"]; TXT2=t["TXT2"]; TXT3=t["TXT3"]
+    CARD_ERR=t["CARD_ERR"]; CARD_WARN=t["CARD_WARN"]
 
 # ── fonts ─────────────────────────────────────────────────────────────────────
 # Segoe UI Variable = Windows 11 modern, falls back to Segoe UI on Win10
@@ -71,7 +98,7 @@ def list_tables(conn):
     return [t.table_name for t in conn.cursor().tables(tableType="TABLE")]
 
 # ── analysis wrapper ──────────────────────────────────────────────────────────
-def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None):
+def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None, quarter=None):
     def prog(msg):
         if progress_cb: progress_cb(msg)
     prog("Łączę z bazą…")
@@ -95,7 +122,7 @@ def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None):
             "detail":"","rows":[],"explanation":""}],"summary":{},"period":"?"}
     from checks import run_all
     return run_all(ksef, ksiega, vat, vatsp, month, year,
-                   cfg=cfg, prog_cb=progress_cb)
+                   cfg=cfg, prog_cb=progress_cb, quarter=quarter)
 
 # ── settings window ───────────────────────────────────────────────────────────
 class SettingsWindow(tk.Toplevel):
@@ -984,6 +1011,8 @@ class App(tk.Tk):
         self.minsize(1000, 620)
         self.configure(bg=BG)
         self._cfg = cfg_module.load()
+        apply_theme(self._cfg.get("theme", "dark"))
+        self.configure(bg=BG)
         self._checks = []
         self._selected = None
         self._last_res = None
@@ -1099,6 +1128,11 @@ class App(tk.Tk):
 
         _hdr_btn("⚙  Ustawienia", self._open_settings)
         _hdr_btn("🕐  Historia",   self._open_history)
+        _cur = self._cfg.get("theme","dark")
+        _icon = THEMES[_cur]["THEME_ICON"]
+        _lbl  = THEMES[_cur]["THEME_LABEL"]
+        self._theme_btn = _hdr_btn(f"{_icon}  {_lbl}", self._toggle_theme)
+        self._theme_btn.config(fg=ACCENT)
 
         # ── notebook ──────────────────────────────────────────────────────
         nb_style = ttk.Style(self); nb_style.theme_use("clam")
@@ -1153,7 +1187,7 @@ class App(tk.Tk):
         # separator
         tk.Frame(tb_inner, bg=BORDER, width=1).pack(side="left", fill="y", padx=14)
 
-        # segmented period control
+        # segmented period control: Cały | Miesiąc | Kwartał
         self.period_var = tk.StringVar(value=self._cfg.get("default_period","month"))
         seg = tk.Frame(tb_inner, bg=BG3)
         seg.pack(side="left")
@@ -1162,20 +1196,26 @@ class App(tk.Tk):
             relief="flat", padx=14, pady=7, cursor="hand2",
             command=lambda: (self.period_var.set("all"), self._toggle_period()))
         self._btn_all.pack(side="left")
-        # divider inside segmented
         tk.Frame(seg, bg=BORDER, width=1).pack(side="left", fill="y")
         self._btn_month = tk.Button(seg, text="Miesiąc", font=FS,
             bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
             relief="flat", padx=14, pady=7, cursor="hand2",
             command=lambda: (self.period_var.set("month"), self._toggle_period()))
         self._btn_month.pack(side="left")
+        tk.Frame(seg, bg=BORDER, width=1).pack(side="left", fill="y")
+        self._btn_quarter = tk.Button(seg, text="Kwartał", font=FS,
+            bg=BG3, fg=TXT2, activebackground=BG4, activeforeground=TXT,
+            relief="flat", padx=14, pady=7, cursor="hand2",
+            command=lambda: (self.period_var.set("quarter"), self._toggle_period()))
+        self._btn_quarter.pack(side="left")
 
         tk.Frame(tb_inner, bg=BG2, width=8).pack(side="left")
 
-        # month / year pickers
+        # selektory okresu
         import datetime; now = datetime.datetime.now()
-        self.month_var = tk.StringVar(value=MONTHS_PL[now.month-1])
-        self.year_var  = tk.StringVar(value=str(now.year))
+        self.month_var   = tk.StringVar(value=MONTHS_PL[now.month-1])
+        self.year_var    = tk.StringVar(value=str(now.year))
+        self.quarter_var = tk.StringVar(value=f"Q{(now.month-1)//3+1}")
         style = ttk.Style()
         style.configure("TB.TCombobox", fieldbackground=BG3, background=BG3,
                         foreground=TXT, selectbackground=BG4, padding=6)
@@ -1183,6 +1223,10 @@ class App(tk.Tk):
                                       values=MONTHS_PL, state="disabled",
                                       width=11, font=FS)
         self.month_cb.pack(side="left", padx=(0,4))
+        self.quarter_cb = ttk.Combobox(tb_inner, textvariable=self.quarter_var,
+                                        values=["Q1","Q2","Q3","Q4"], state="disabled",
+                                        width=5, font=FS)
+        self.quarter_cb.pack(side="left", padx=(0,4))
         self.year_sp = tk.Spinbox(tb_inner, from_=2020, to=2035,
                                    textvariable=self.year_var, width=5, font=FS,
                                    bg=BG3, fg=TXT, buttonbackground=BG4,
@@ -1299,17 +1343,64 @@ class App(tk.Tk):
         self._run()
 
     def _toggle_period(self):
-        is_month = self.period_var.get() == "month"
-        self.month_cb.config(state="readonly" if is_month else "disabled")
-        self.year_sp.config(state="normal"    if is_month else "disabled")
-        self._btn_all.config(
-            bg=ACCENT if not is_month else BG3,
-            fg="#18181b" if not is_month else TXT2,
-            activebackground="#ea6d05" if not is_month else BG4)
-        self._btn_month.config(
-            bg=ACCENT if is_month else BG3,
-            fg="#18181b" if is_month else TXT2,
-            activebackground="#ea6d05" if is_month else BG4)
+        mode       = self.period_var.get()
+        is_month   = mode == "month"
+        is_quarter = mode == "quarter"
+
+        # pokaż tylko właściwy selektor
+        self.month_cb.pack_forget()
+        self.quarter_cb.pack_forget()
+        self.year_sp.pack_forget()
+
+        if is_month:
+            self.month_cb.config(state="readonly")
+            self.month_cb.pack(side="left", padx=(0,4))
+            self.year_sp.config(state="normal")
+            self.year_sp.pack(side="left")
+        elif is_quarter:
+            self.quarter_cb.config(state="readonly")
+            self.quarter_cb.pack(side="left", padx=(0,4))
+            self.year_sp.config(state="normal")
+            self.year_sp.pack(side="left")
+        else:
+            self.month_cb.config(state="disabled")
+            self.quarter_cb.config(state="disabled")
+            self.year_sp.config(state="disabled")
+
+        for btn, val in [(self._btn_all,"all"),(self._btn_month,"month"),(self._btn_quarter,"quarter")]:
+            active = (mode == val)
+            btn.config(
+                bg=ACCENT if active else BG3,
+                fg="#18181b" if active else TXT2,
+                activebackground="#ea6d05" if active else BG4)
+
+    def _toggle_theme(self):
+        new = "light" if self._cfg.get("theme","dark") == "dark" else "dark"
+        self._cfg["theme"] = new
+        cfg_module.save(self._cfg)
+        apply_theme(new)
+        # zachowaj stan
+        mdb_path = self._mdb_path
+        # przebuduj całe UI
+        for w in self.winfo_children():
+            w.destroy()
+        self.configure(bg=BG)
+        self._checks = []; self._selected = None
+        self._last_res = None; self._mdb_path = None
+        try:
+            self._logo_img256 = _logo_photoimage(_LOGO_256)
+            self.iconphoto(True, self._logo_img256)
+        except Exception:
+            pass
+        self._build()
+        # przywróć plik jeśli był
+        if mdb_path:
+            self._mdb_path = mdb_path
+            name  = os.path.basename(mdb_path)
+            short = name if len(name) <= 38 else name[:36] + "…"
+            self.file_lbl.config(text=f"📂  {short}", fg=A2, bg=BG3)
+            self.btn.config(state="normal")
+        threading.Thread(target=self._check_updates, daemon=True).start()
 
     def _open_settings(self):
         SettingsWindow(self, self._cfg, self._on_settings_saved, app_ref=self)
@@ -1332,20 +1423,26 @@ class App(tk.Tk):
 
         # ustaw selektor okresu na podstawie zapisanego wpisu
         period = entry.get("period", "")
-        month, year = None, None
-        for mi, mname in enumerate(MONTHS_PL, 1):
-            if mname in period:
-                month = mi
-                try: year = int(period.strip().split()[-1])
-                except Exception: pass
-                break
-
-        if month and year:
-            self.period_var.set("month")
-            self.month_var.set(MONTHS_PL[month - 1])
-            self.year_var.set(str(year))
+        import re
+        q_match = re.search(r'Q([1-4])\s+(\d{4})', period)
+        if q_match:
+            self.period_var.set("quarter")
+            self.quarter_var.set(f"Q{q_match.group(1)}")
+            self.year_var.set(q_match.group(2))
         else:
-            self.period_var.set("all")
+            month, year = None, None
+            for mi, mname in enumerate(MONTHS_PL, 1):
+                if mname in period:
+                    month = mi
+                    try: year = int(period.strip().split()[-1])
+                    except Exception: pass
+                    break
+            if month and year:
+                self.period_var.set("month")
+                self.month_var.set(MONTHS_PL[month - 1])
+                self.year_var.set(str(year))
+            else:
+                self.period_var.set("all")
         self._toggle_period()
 
         self._show_results(entry)
@@ -1370,19 +1467,26 @@ class App(tk.Tk):
         self.progress.start(12)
         self.status_lbl.config(text="Analizuję…", fg=TXT2)
 
-        month, year = None, None
-        if self.period_var.get() == "month":
-            try:
-                month = MONTHS_PL.index(self.month_var.get()) + 1
-                year  = int(self.year_var.get())
+        month, year, quarter = None, None, None
+        mode = self.period_var.get()
+        try:
+            year = int(self.year_var.get())
+        except ValueError:
+            pass
+        if mode == "month":
+            try: month = MONTHS_PL.index(self.month_var.get()) + 1
             except (ValueError, IndexError): pass
+        elif mode == "quarter":
+            try: quarter = int(self.quarter_var.get().replace("Q",""))
+            except (ValueError, AttributeError): pass
 
         cfg = dict(self._cfg)
 
         def worker():
             try:
                 res = analyze_mdb(self._mdb_path, month=month, year=year,
-                                   cfg=cfg, progress_cb=lambda m: self._set_status(m))
+                                   cfg=cfg, progress_cb=lambda m: self._set_status(m),
+                                   quarter=quarter)
                 self.after(0, lambda: self._show_results(res))
             except Exception as ex:
                 msg = str(ex)
@@ -1455,7 +1559,7 @@ class App(tk.Tk):
         # check cards — grouped by category
         self._checks = res.get("checks",[])
         kc = {"ok":(OK,"✓"),"warning":(WARN,"⚠"),"error":(ERR,"✗")}
-        _kind_cbg = {"ok": BG2, "warning": "#251d08", "error": "#231010"}
+        _kind_cbg = {"ok": BG2, "warning": CARD_WARN, "error": CARD_ERR}
 
         # group checks by category, preserving original index for _select
         from collections import OrderedDict

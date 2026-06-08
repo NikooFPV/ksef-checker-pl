@@ -61,7 +61,9 @@ NETTO_COLS_SP = ["NETTO23","NETTO8","NETTO5","NETTO22","NETTO7","NETTO3",
 VAT_COLS_SP   = ["VAT23","VAT8","VAT5","VAT22","VAT7","VAT3"]  # PODATEK_NALEZNY is the SUM, not additive
 
 # ── prepare: parse, filter, split ─────────────────────────────────────────────
-def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None):
+QUARTER_MONTHS = {1:[1,2,3], 2:[4,5,6], 3:[7,8,9], 4:[10,11,12]}
+
+def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     cfg = cfg or {}
     tol = float(cfg.get("amount_tolerance", 0.05))
     cutoff_days = int(cfg.get("cutoff_days", 3))
@@ -87,7 +89,23 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None):
     ksef_spr_all = ksef[ksef["DOCUMENT_TYPE"]=="1"].copy()
 
     # period filter
-    if month and year:
+    if quarter and year:
+        months = QUARTER_MONTHS.get(quarter, [])
+        def in_p(s): return s.dt.month.isin(months) & (s.dt.year==year)
+        ksef_zak = ksef_zak_all[in_p(ksef_zak_all["ISSUE_DATE"])].copy()
+        sd = ksef_spr_all["INVOICING_DATE"].fillna(ksef_spr_all["ISSUE_DATE"])
+        ksef_spr  = ksef_spr_all[in_p(sd)].copy()
+        vat_p     = vat[in_p(vat["DATA_UJECIA"])].copy()
+        kd        = ksiega["DATA_UJECIA"].fillna(ksiega["DATA"])
+        ksiega_p  = ksiega[in_p(kd)].copy()
+        vatsp_p   = None
+        if vatsp is not None:
+            spd = vatsp["DATA_SPRZEDAZY"].fillna(vatsp["DATA_WYSTAWIENIA"])
+            vatsp_p = vatsp[in_p(spd)].copy()
+        use_cutoff = False
+        # nadpisz month/year żeby date_shift checks mialy zakres
+        month = None
+    elif month and year:
         def in_p(s): return (s.dt.month==month) & (s.dt.year==year)
         ksef_zak = ksef_zak_all[in_p(ksef_zak_all["ISSUE_DATE"])].copy()
         sd = ksef_spr_all["INVOICING_DATE"].fillna(ksef_spr_all["ISSUE_DATE"])
@@ -656,7 +674,7 @@ CHECK_REGISTRY = {
     "nip_name_inconsistency": ("Sprawdzam spójność NIP↔Nazwa…",        check_nip_name_inconsistency),
 }
 
-def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None):
+def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quarter=None):
     def prog(msg):
         if prog_cb: prog_cb(msg)
 
@@ -664,7 +682,7 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None):
     enabled = cfg.get("enabled_checks", {})
 
     prog("Przygotowuję dane…")
-    d = prepare(ksef, ksiega, vat, vatsp, month, year, cfg)
+    d = prepare(ksef, ksiega, vat, vatsp, month, year, cfg, quarter=quarter)
 
     results = []
     for cid, (msg, fn) in CHECK_REGISTRY.items():
@@ -693,5 +711,10 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None):
     errors   = sum(1 for r in results if r["kind"]=="error")
     warnings = sum(1 for r in results if r["kind"]=="warning")
     status   = "error" if errors else ("warning" if warnings else "ok")
-    return {"status":status, "checks":results, "summary":summary,
-            "period": f"{MONTHS_PL[month-1]} {year}" if month and year else "Cały zakres"}
+    if quarter and year:
+        period_label = f"Q{quarter} {year}  ({', '.join(MONTHS_PL[m-1] for m in QUARTER_MONTHS[quarter])})"
+    elif month and year:
+        period_label = f"{MONTHS_PL[month-1]} {year}"
+    else:
+        period_label = "Cały zakres"
+    return {"status":status, "checks":results, "summary":summary, "period": period_label}
