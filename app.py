@@ -254,7 +254,7 @@ class SettingsWindow(tk.Toplevel):
                     # szukaj URL instalatora
                     inst_url = None
                     for asset in data.get("assets", []):
-                        if "installer" in asset["name"].lower():
+                        if "installer" in asset["name"].lower() and "access" not in asset["name"].lower():
                             inst_url = asset["browser_download_url"]
                             break
                     if not inst_url:
@@ -1014,7 +1014,7 @@ class App(tk.Tk):
             # szukaj URL instalatora w assets
             installer_url = None
             for asset in data.get("assets", []):
-                if "installer" in asset["name"].lower():
+                if "installer" in asset["name"].lower() and "access" not in asset["name"].lower():
                     installer_url = asset["browser_download_url"]
                     break
             if not installer_url:
