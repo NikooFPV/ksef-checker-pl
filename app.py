@@ -1747,40 +1747,70 @@ class App(tk.Tk):
         hsb = ttk.Scrollbar(self.tree_frame, orient="horizontal")
         vsb.pack(side="right", fill="y")
         hsb.pack(side="bottom", fill="x")
-        tree = ttk.Treeview(self.tree_frame, columns=cols, show="headings",
+
+        # >5 kolumn (porównania kwot) → tryb rozwijany; <=5 → płaski
+        EXPANDABLE = len(cols) > 5
+        head_cols  = cols[:3] if EXPANDABLE else cols
+        sub_cols   = cols[3:] if EXPANDABLE else []
+
+        tree = ttk.Treeview(self.tree_frame,
+                             columns=head_cols,
+                             show="tree headings" if EXPANDABLE else "headings",
                              yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         vsb.config(command=tree.yview)
         hsb.config(command=tree.xview)
         tree.pack(side="left", fill="both", expand=True)
 
-        for c in cols:
-            w = max(len(str(c)), max((len(str(r.get(c,"")or"")) for r in rows[:100]),default=0))
-            px = min(w*8+20, 320)
+        if EXPANDABLE:
+            tree.column("#0", width=22, minwidth=22, stretch=False)
+            tree.heading("#0", text="")
+            tree.tag_configure("detail_row", foreground=TXT2, font=(_SYS, 9))
+
+        for c in head_cols:
+            w = max(len(str(c)),
+                    max((len(str(r.get(c,"")or"")) for r in rows[:100]), default=0))
+            px = min(w*9+20, 320)
             tree.heading(c, text=c, anchor="w")
             tree.column(c, width=px, minwidth=50, anchor="w", stretch=False)
 
         for row in rows:
-            tree.insert("", "end",
-                        values=tuple(str(row.get(c,"")or"") for c in cols))
-        tree.bind("<MouseWheel>",
-                  lambda e: tree.yview_scroll(-1*(e.delta//120),"units"))
+            pid = tree.insert("", "end",
+                              values=tuple(str(row.get(c,"")or"") for c in head_cols))
+            if EXPANDABLE:
+                for sc in sub_cols:
+                    val = str(row.get(sc,"")or"")
+                    tree.insert(pid, "end",
+                                text=f"  {sc}",
+                                values=(val,) + ("",)*(len(head_cols)-1),
+                                tags=("detail_row",))
 
-        # double-click copies clicked cell to clipboard
-        def on_dbl(e, _t=tree, _c=cols):
-            item   = _t.identify_row(e.y)
-            col_id = _t.identify_column(e.x)
-            if not item or not col_id: return
-            idx = int(col_id.replace("#","")) - 1
-            if idx < 0 or idx >= len(_c): return
-            val = _t.item(item, "values")[idx]
-            if not val: return
-            self.clipboard_clear()
-            self.clipboard_append(val)
-            self._set_status(f"\u2713 Skopiowano: {val[:60]}")
+        tree.bind("<MouseWheel>",
+                  lambda e: tree.yview_scroll(-1*(e.delta//120), "units"))
+
+        def on_dbl(e, _t=tree, _exp=EXPANDABLE, _hc=head_cols):
+            item = _t.identify_row(e.y)
+            if not item: return
+            if _exp and _t.parent(item) == "":
+                _t.item(item, open=not _t.item(item, "open"))
+            else:
+                if _exp:
+                    val = (_t.item(item,"values") or ("",))[0]
+                else:
+                    col_id = _t.identify_column(e.x)
+                    if not col_id: return
+                    idx = int(col_id.replace("#","")) - 1
+                    vals = _t.item(item,"values")
+                    val = vals[idx] if 0 <= idx < len(vals) else ""
+                if not val: return
+                self.clipboard_clear(); self.clipboard_append(str(val))
+                self._set_status(f"✓ Skopiowano: {str(val)[:60]}")
+
         tree.bind("<Double-Button-1>", on_dbl)
 
-        tk.Label(self.tree_frame,
-                 text="\u2139 Dwuklik na komórce = kopiuj do schowka",
+        hint = ("ℹ  Dwuklik na wierszu = rozwiń/zwiń  |  Dwuklik na szczegółach = kopiuj"
+                if EXPANDABLE else
+                "ℹ  Dwuklik na komórce = kopiuj do schowka")
+        tk.Label(self.tree_frame, text=hint,
                  font=FSM, bg=BG, fg=TXT3, anchor="e").pack(
                  side="bottom", fill="x", padx=8, pady=2)
 
