@@ -85,6 +85,10 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     for c in ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]:
         ksef[c] = pd.to_numeric(ksef[c], errors="coerce")
 
+    # normalizuj KSEF_NUMBER — Access padduje stringi spacjami
+    if "KSEF_NUMBER" in ksef.columns:
+        ksef["KSEF_NUMBER"] = ksef["KSEF_NUMBER"].astype(str).str.strip().replace({"nan":"","None":""})
+
     ksef_zak_all = ksef[ksef["DOCUMENT_TYPE"]=="2"].copy()
     ksef_spr_all = ksef[ksef["DOCUMENT_TYPE"]=="1"].copy()
 
@@ -261,8 +265,13 @@ def check_amounts_vs_vat(d, cfg=None):
     if not booked:
         return ok("Kwoty KSeF vs VATZAKUPY: brak danych", "Brak zaksięgowanych faktur.")
     ksef_b = d["ksef_zak"][d["ksef_zak"]["KSEF_NUMBER"].isin(booked)].copy()
-    vat_b  = d["vat"][d["vat"]["KSEF"].isin(booked)][
-        ["KSEF","WARTOSC_BRUTTO","_netto","_vat","ZAKUP50"]].copy()
+    # agreguj po KSEF żeby uniknąć fan-out gdy jeden nr KSeF ma wiele wierszy w VAT
+    vat_b  = (d["vat"][d["vat"]["KSEF"].isin(booked)]
+              .groupby("KSEF", as_index=False)
+              .agg(WARTOSC_BRUTTO=("WARTOSC_BRUTTO","sum"),
+                   _netto=("_netto","sum"),
+                   _vat=("_vat","sum"),
+                   ZAKUP50=("ZAKUP50","max")))
     m = ksef_b.merge(vat_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
     m["ZAKUP50"] = pd.to_numeric(m["ZAKUP50"], errors="coerce").fillna(0)
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["WARTOSC_BRUTTO"]).round(2)
@@ -316,10 +325,17 @@ def check_amounts_vs_ksiega(d, cfg=None):
     for c in kwota_cols:
         ksiega_b[c] = pd.to_numeric(ksiega_b[c], errors="coerce").fillna(0)
     ksiega_b["_kwota"] = ksiega_b[kwota_cols].sum(axis=1)
-    ksiega_b["PROCENT_KOSZTU"] = pd.to_numeric(
-        ksiega_b.get("PROCENT_KOSZTU", 100), errors="coerce").fillna(100)
-    m = ksef_b.merge(ksiega_b[["KSEF","_kwota","PROCENT_KOSZTU"]+kwota_cols],
-                     left_on="KSEF_NUMBER", right_on="KSEF", how="left")
+    if "PROCENT_KOSZTU" in ksiega_b.columns:
+        ksiega_b["PROCENT_KOSZTU"] = pd.to_numeric(
+            ksiega_b["PROCENT_KOSZTU"], errors="coerce").fillna(100)
+    else:
+        ksiega_b["PROCENT_KOSZTU"] = 100.0
+    # agreguj po KSEF — jeden nr może mieć wiele wierszy (split MPK/kont)
+    # PROCENT_KOSZTU: bierzemy max (najczęściej identyczny dla wszystkich wierszy)
+    ksiega_agg = (ksiega_b.groupby("KSEF", as_index=False)
+                  .agg(_kwota=("_kwota","sum"),
+                       PROCENT_KOSZTU=("PROCENT_KOSZTU","max")))
+    m = ksef_b.merge(ksiega_agg, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
     m["_expected"] = (m["NET_AMOUNT"] * m["PROCENT_KOSZTU"] / 100).round(2)
     m["Δ_ksiega"]  = (m["_expected"] - m["_kwota"]).round(2)
     disc = m[m["Δ_ksiega"].abs() > tol].copy()
@@ -344,8 +360,11 @@ def check_sales_amounts(d, cfg=None):
     if not booked:
         return ok("Kwoty sprzedaży KSeF vs VATSPRZEDAZ: brak danych")
     ksef_b = d["ksef_spr"][d["ksef_spr"]["KSEF_NUMBER"].isin(booked)].copy()
-    vsp_b  = d["vatsp"][d["vatsp"]["KSEF"].isin(booked)][
-        ["KSEF","SPRZEDAZ_BRUTTO","_netto","_vat"]].copy()
+    vsp_b  = (d["vatsp"][d["vatsp"]["KSEF"].isin(booked)]
+              .groupby("KSEF", as_index=False)
+              .agg(SPRZEDAZ_BRUTTO=("SPRZEDAZ_BRUTTO","sum"),
+                   _netto=("_netto","sum"),
+                   _vat=("_vat","sum")))
     m = ksef_b.merge(vsp_b, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
     m["Δ_brutto"] = (m["GROSS_AMOUNT"] - m["SPRZEDAZ_BRUTTO"]).round(2)
     m["Δ_netto"]  = (m["NET_AMOUNT"]   - m["_netto"]).round(2)
@@ -369,35 +388,23 @@ def check_sales_amounts(d, cfg=None):
             "Δ_netto":"Δ Netto","Δ_vat":"Δ VAT","Δ_brutto":"Δ Brutto"})),
         explanation="Porównanie netto/VAT/brutto sprzedaży między KSeF a rejestrem VATSPRZEDAZ.")
 
-def _date_shift(ksef_df, reg_df, ksef_date_col, reg_date_col, reg_ksef_col,
-                month, year, label_ksef, label_reg, name_col, amount_col):
-    nums = set(ksef_df["KSEF_NUMBER"].dropna())
-    booked = reg_df[reg_df[reg_ksef_col].isin(nums)].copy()
-    wrong = booked[~((booked[reg_date_col].dt.month==month) &
-                     (booked[reg_date_col].dt.year==year))].copy()
-    if wrong.empty: return None
-    m = ksef_df.merge(wrong[["KSEF_NUMBER" if reg_ksef_col=="KSEF_NUMBER" else reg_ksef_col,
-                               reg_date_col]].rename(
-        columns={reg_ksef_col:"KSEF_NUMBER"}),
-        on="KSEF_NUMBER", how="inner")
-    kd = ksef_df.get(ksef_date_col, ksef_df["ISSUE_DATE"])
-    m2 = ksef_df[ksef_df["KSEF_NUMBER"].isin(wrong[reg_ksef_col])].copy()
-    m2 = m2.merge(wrong[[reg_ksef_col,reg_date_col]],
-                  left_on="KSEF_NUMBER", right_on=reg_ksef_col, how="inner")
-    m2["Miesiąc KSeF"]    = m2["ISSUE_DATE"].dt.strftime("%m.%Y")
-    m2["Miesiąc rejestr"] = m2[reg_date_col].dt.strftime("%m.%Y")
-    return m2[["INVOICE_NUMBER",name_col,"Miesiąc KSeF","Miesiąc rejestr","GROSS_AMOUNT"]].copy()
 
 def check_date_shift_purchases(d, cfg=None):
     if not (d["month"] and d["year"]): return None
     m, y = d["month"], d["year"]
     nums = set(d["ksef_zak"]["KSEF_NUMBER"].dropna())
     booked = d["vat"][d["vat"]["KSEF"].isin(nums)].copy()
-    wrong = booked[~((booked["DATA_UJECIA"].dt.month==m)&(booked["DATA_UJECIA"].dt.year==y))]
+    # wyklucz NaT (brak daty ujęcia) i legalne przesunięcia M+1..M+3
+    # art. 86 ust. 11 pozwala na ujęcie w tym samym lub 3 kolejnych miesiącach
+    booked_valid = booked[booked["DATA_UJECIA"].notna()].copy()
+    ujecia_ym = booked_valid["DATA_UJECIA"].dt.year * 12 + booked_valid["DATA_UJECIA"].dt.month
+    ksef_ym   = y * 12 + m
+    # błąd = ujęto PRZED miesiącem wystawienia LUB POWYŻEJ M+3
+    wrong = booked_valid[(ujecia_ym < ksef_ym) | (ujecia_ym > ksef_ym + 3)]
     if wrong.empty:
         return ok(f"Daty zaksięgowania zakupów: prawidłowe",
-                  f"Wszystkie zakupy ujęte w {MONTHS_PL[m-1]} {y}.",
-                  "Daty wystawienia i ujęcia VAT zgodne z wybranym miesiącem.")
+                  f"Wszystkie zakupy ujęte w {MONTHS_PL[m-1]} {y} lub w ciągu 3 kolejnych miesięcy.",
+                  "Daty ujęcia VAT zgodne z dopuszczalnym oknem (art. 86 ust. 11).")
     merged = d["ksef_zak"].merge(
         wrong[["KSEF","DATA_UJECIA","_netto","_vat","WARTOSC_BRUTTO"]],
         left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
@@ -406,13 +413,13 @@ def check_date_shift_purchases(d, cfg=None):
     df = merged[["INVOICE_NUMBER","SELLER_NAME","Miesiąc KSeF","Miesiąc rejestr",
                  "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT",
                  "_netto","_vat","WARTOSC_BRUTTO"]].copy()
-    return warn(f"Zakupy w złym miesiącu w VATZAKUPY: {len(df)}",
-                f"Data wystawienia: {MONTHS_PL[m-1]} {y} → data ujęcia VAT różna",
+    return warn(f"Zakupy ujęte poza dopuszczalnym oknem w VATZAKUPY: {len(df)}",
+                f"Wystawienie: {MONTHS_PL[m-1]} {y} → ujęcie przed tym miesiącem lub >M+3",
                 rows=rows_to_dicts(df.rename(columns={
                     "INVOICE_NUMBER":"Nr faktury","SELLER_NAME":"Sprzedawca",
                     "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)",
                     "_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)","WARTOSC_BRUTTO":"Brutto (VAT rej.)"})),
-                explanation="Zakupy powinny być ujmowane wg daty wystawienia. Faktura wpadła do innego miesiąca w rejestrze VAT.")
+                explanation="Art. 86 ust. 11: fakturę można ująć w miesiącu wystawienia lub 3 kolejnych. Ujęcie wstecz lub po M+3 = błąd okresu.")
 
 def check_date_shift_sales(d, cfg=None):
     if not (d["month"] and d["year"]): return None
@@ -422,7 +429,12 @@ def check_date_shift_sales(d, cfg=None):
     vatsp["_sp"] = vatsp["DATA_SPRZEDAZY"].fillna(vatsp["DATA_WYSTAWIENIA"])
     nums = set(d["ksef_spr"]["KSEF_NUMBER"].dropna())
     booked = vatsp[vatsp["KSEF"].isin(nums)].copy()
-    wrong = booked[~((booked["_sp"].dt.month==m)&(booked["_sp"].dt.year==y))]
+    # wyklucz NaT i legalne przesunięcia (sprzedaż: ujęcie wstecz jest błędem,
+    # ale do M+1 bywa akceptowalne dla korekt — zostawiamy próg M-1..M+1)
+    booked_valid = booked[booked["_sp"].notna()].copy()
+    sp_ym   = booked_valid["_sp"].dt.year * 12 + booked_valid["_sp"].dt.month
+    ksef_ym = y * 12 + m
+    wrong = booked_valid[sp_ym != ksef_ym]
     if wrong.empty:
         return ok(f"Daty zaksięgowania sprzedaży: prawidłowe",
                   f"Wszystkie faktury sprzedaży ujęte w {MONTHS_PL[m-1]} {y}.",
@@ -437,12 +449,12 @@ def check_date_shift_sales(d, cfg=None):
                  "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT",
                  "_netto","_vat","SPRZEDAZ_BRUTTO"]].copy()
     return warn(f"Sprzedaż w złym miesiącu w VATSPRZEDAZ: {len(df)}",
-                f"Data sprzedaży: {MONTHS_PL[m-1]} {y} → data w rejestrze różna",
+                f"Data sprzedaży: {MONTHS_PL[m-1]} {y} → data ujęcia w rejestrze różna",
                 rows=rows_to_dicts(df.rename(columns={
                     "INVOICE_NUMBER":"Nr faktury","BUYER_NAME":"Nabywca",
                     "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)",
                     "_netto":"Netto (rej. sp.)","_vat":"VAT (rej. sp.)","SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)"})),
-                explanation="Sprzedaż ujmujemy wg daty sprzedaży. Faktura wpadła do innego miesiąca.")
+                explanation="Faktura sprzedaży powinna być ujęta w miesiącu daty sprzedaży/wystawienia.")
 
 def check_no_ksef_number(d, cfg=None):
     vat = d["vat_p"]
@@ -520,7 +532,8 @@ def check_duplicates_vatsp(d, cfg=None):
                explanation="Duplikat w VATSPRZEDAZ zawyży VAT należny i przychód.")
 
 def check_corrections_purchases(d, cfg=None):
-    zak = d["ksef_zak_all"]
+    # używaj okresu — ksef_zak_all obejmowałby korekty z całej historii bazy
+    zak = d["ksef_zak"]
     kor = zak[zak["GROSS_AMOUNT"] < 0].copy()
     if kor.empty:
         return ok("Korekty zakupów: brak lub wszystkie OK",
@@ -540,7 +553,7 @@ def check_corrections_purchases(d, cfg=None):
                explanation="Faktury korygujące (ujemne) z KSeF nie zostały zaksięgowane. Zawyżają odliczony VAT i koszty.")
 
 def check_corrections_sales(d, cfg=None):
-    spr = d["ksef_spr_all"]
+    spr = d["ksef_spr"]  # okres — nie wszystkie lata
     if "INVOICE_TYPE" in spr.columns:
         kor = spr[spr["INVOICE_TYPE"].str.strip().str.upper().isin(["KOR","KOREKTA"])].copy()
     else:
@@ -588,27 +601,37 @@ def check_nip_mismatch(d, cfg=None):
 
 def check_vat_deadline(d, cfg=None):
     vat = d["vat_p"].copy()
-    vat["_wys"]  = pd.to_datetime(vat["DATA_WYSTAWIENIA"], errors="coerce", dayfirst=False)
-    vat["_gap"]  = (vat["DATA_UJECIA"] - vat["_wys"]).dt.days
-    late = vat[(vat["_gap"]>90)&vat["KSEF"].notna()&(vat["KSEF"].str.strip()!="")].copy()
+    # Art. 86 ust. 11 ustawy o VAT: termin = 3 kolejne okresy rozliczeniowe
+    # (miesiące kalendarzowe), NIE 90 dni
+    vat["_wys"] = pd.to_datetime(vat["DATA_WYSTAWIENIA"], errors="coerce", dayfirst=False)
+    vat["_months_gap"] = (
+        (vat["DATA_UJECIA"].dt.year  * 12 + vat["DATA_UJECIA"].dt.month) -
+        (vat["_wys"].dt.year         * 12 + vat["_wys"].dt.month)
+    )
+    late = vat[
+        vat["_months_gap"].notna() &
+        (vat["_months_gap"] > 3) &
+        vat["KSEF"].notna() &
+        (vat["KSEF"].str.strip() != "")
+    ].copy()
     if late.empty:
         return ok("Termin odliczenia VAT: prawidłowy",
                   "Brak faktur ujętych po upływie 90 dni od wystawienia.",
                   "Wszystkie faktury ujęto w rejestrze w terminie ustawowym.")
-    late["Dni opóźnienia"] = late["_gap"].astype(int)
+    late["Miesięcy po terminie"] = late["_months_gap"].astype(int) - 3
     df = late[["NUMER","DATA_WYSTAWIENIA","DATA_UJECIA","FIRMA",
-               "_netto","_vat","WARTOSC_BRUTTO","Dni opóźnienia"]].copy()
+               "_netto","_vat","WARTOSC_BRUTTO","Miesięcy po terminie"]].copy()
     df["DATA_WYSTAWIENIA"] = df["DATA_WYSTAWIENIA"].astype(str).str[:10]
     df["DATA_UJECIA"]      = df["DATA_UJECIA"].astype(str).str[:10]
     total_vat = late["_vat"].sum() if "_vat" in late.columns else 0
-    return err(f"Faktury po terminie odliczenia VAT (>90 dni): {len(late)}",
+    return err(f"Faktury po terminie odliczenia VAT (>3 mies.): {len(late)}",
                f"Ryzyko utraty prawa do odliczenia. Kwota VAT: {total_vat:,.2f} zł",
                rows=rows_to_dicts(df.rename(columns={
                    "NUMER":"Nr faktury","DATA_WYSTAWIENIA":"Data wyst.",
                    "DATA_UJECIA":"Data ujęcia","FIRMA":"Kontrahent",
                    "_netto":"Netto (VAT rej.)","_vat":"VAT (VAT rej.)",
                    "WARTOSC_BRUTTO":"Brutto (VAT rej.)"})),
-               explanation="Art. 86 ust. 11 ustawy o VAT: prawo do odliczenia w okresie wystawienia lub 3 kolejnych miesiącach. Przekroczenie = utrata prawa lub konieczność korekty.")
+               explanation="Art. 86 ust. 11 ustawy o VAT: prawo do odliczenia w okresie wystawienia lub 3 kolejnych miesiącach kalendarzowych. Przekroczenie = utrata prawa lub konieczność korekty.")
 
 def check_split_payment(d, cfg=None):
     vat = d["vat_p"].copy()
@@ -628,10 +651,10 @@ def check_split_payment(d, cfg=None):
         return ok("Split payment (MPP): prawidłowy",
                   f"Sprawdzono {len(vat)} faktur — brak nieprawidłowości.",
                   "Oznaczenia MPP zgodne z progiem 15 000 zł brutto.")
-    return err(f"Brak oznaczenia MPP dla faktur ≥15 000 zł: {len(rows)}",
-               f"Wartość: {big_no['WARTOSC_BRUTTO'].sum():,.2f} zł",
-               rows=rows,
-               explanation="MPP obowiązkowy dla faktur ≥15 000 zł brutto z towarów/usług z zał. 15 ustawy o VAT (art. 108a ust. 1a).")
+    return warn(f"Faktury ≥15 000 zł bez oznaczenia MPP: {len(rows)}",
+                f"Wartość: {big_no['WARTOSC_BRUTTO'].sum():,.2f} zł",
+                rows=rows,
+                explanation="MPP wymagany dla faktur ≥15 000 zł brutto z towarów/usług z Załącznika 15 do ustawy o VAT (art. 108a ust. 1a). Sprawdź czy faktura dotyczy towarów z zał. 15.")
 
 def check_foreign_currency(d, cfg=None):
     if "CURRENCY_IDENTIFIER" not in d["ksef_zak"].columns: return None

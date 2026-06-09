@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "1.5.0"
+VERSION     = "2.0.0"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -1097,6 +1097,486 @@ class HistoryWindow(tk.Toplevel):
         self._build()
 
 
+# ── help window ───────────────────────────────────────────────────────────────
+class HelpWindow(tk.Toplevel):
+    """Okno pomocy z instrukcją użytkownika."""
+
+    # ── treść instrukcji ──────────────────────────────────────────────────────
+    _SECTIONS = [
+        ("Opis programu", """
+KSeF Checker to narzędzie do weryfikacji spójności danych między bazą KSeF a bazą księgową programu Insert GT (plik .mdb). Program automatycznie wykrywa rozbieżności między fakturami pobranymi z Krajowego Systemu e-Faktur a zapisami w:
+
+  • KSIEGA — księdze przychodów i rozchodów
+  • VATZAKUPY — rejestrze VAT zakupów
+  • VATSPRZEDAZ — rejestrze VAT sprzedaży
+
+Program nie modyfikuje żadnych danych — działa wyłącznie w trybie odczytu.
+"""),
+        ("Instalacja", """
+WYMAGANIA SYSTEMOWE
+  • Windows 10 / 11 (64-bit)
+  • Microsoft Access Database Engine 2016 (64-bit)
+
+WARIANT A — z Access Database Engine (dla nowych instalacji)
+Pobierz i uruchom KSeF_Checker_Installer_z_AccessEngine.exe. Instalator automatycznie zainstaluje sterownik Microsoft Access jeśli nie jest jeszcze obecny.
+
+WARIANT B — bez Access Database Engine (jeśli sterownik już jest)
+Pobierz i uruchom KSeF_Checker_Installer.exe.
+
+Uwaga: Jeśli masz zainstalowany pakiet Microsoft Office (32-bit), sterownik Access musi być w tej samej wersji bitowej co Office. W razie konfliktu skontaktuj się z administratorem IT.
+"""),
+        ("Przeprowadzenie analizy", """
+KROK 1 — Otwórz plik bazy danych
+Kliknij przycisk 📂 Otwórz plik MDB i wskaż plik bazy danych Insert GT (rozszerzenie .mdb).
+
+Plik MDB to baza danych firmy — zazwyczaj znajduje się w folderze programu Insert GT, np.:
+  C:\\Insert\\GT\\Dane\\NazwaFirmy.mdb
+
+KROK 2 — Wybierz okres analizy
+
+  Cały      — sprawdzenie całej bazy (wszystkich dostępnych danych)
+  Miesiąc   — analiza konkretnego miesiąca (najczęstszy tryb)
+  Kwartał   — analiza kwartalnych deklaracji VAT (Q1–Q4)
+
+KROK 3 — Uruchom analizę
+Kliknij ▶ Sprawdź. Program połączy się z bazą, wczyta tabele i przeprowadzi 19 sprawdzeń. Czas analizy: zazwyczaj 2–10 sekund.
+
+KROK 4 — Przeglądaj wyniki
+  ✓ Karty zielone   — brak nieprawidłowości
+  ⚠ Karty żółte    — ostrzeżenia wymagające weryfikacji
+  ✗ Karty czerwone  — błędy wymagające korekty
+
+Kliknij kartę, aby zobaczyć szczegóły w panelu po prawej.
+"""),
+        ("Filtry i sortowanie", """
+FILTRY KATEGORII
+Na górze lewego panelu znajdują się przyciski filtrów:
+  [ Wszystkie ] [ Kompletność ] [ Kwoty ] [ Daty ]
+  [ Jakość ] [ Korekty ] [ Compliance ]
+
+Kliknięcie kategorii pokazuje tylko jej sprawdzenia i automatycznie zaznacza pierwszy błąd/ostrzeżenie z tej grupy.
+
+SORTOWANIE TABELI
+W panelu szczegółów (prawa strona):
+  • Kliknij nagłówek kolumny — sortuje rosnąco (↑), ponowne kliknięcie malejąco (↓)
+  • Przyciski „Sortuj:" obok licznika wierszy — szybki dostęp do sortowania po dacie lub kwocie
+"""),
+        ("Popup szczegółów faktury", """
+DWUKLIK NA WIERSZU otwiera okno ze szczegółowym porównaniem danych z trzech źródeł:
+
+  ┌──────────┐          ┌───────────────┐
+  │  KSeF    │   ⟷    │  Rejestr VAT  │
+  │          │  Δ Brutto │              │
+  │  Netto   │  Δ Netto  │  Netto        │
+  │ 1 230,00 │  Δ VAT    │    189.35     │
+  │  Brutto  │          │  Brutto       │
+  │ 1 512,90 │          │  1 462.90     │
+  └──────────┘          └───────────────┘
+
+Wartości Δ zaznaczone na czerwono oznaczają rozbieżność.
+Wartość 0,00 oznacza zgodność.
+
+Dla sprawdzeń z KSIEGA wyświetlana jest również karta Księga z kwotą kosztów i procentem odliczenia.
+"""),
+        ("Oznaczanie faktur", """
+Podczas przeglądania wyników możesz oznaczać faktury wymagające poprawki w programie księgowym.
+
+JAK OZNACZAĆ
+  • Prawy klik na wierszu → wiersz zmienia kolor na zielony (oznaczono)
+  • Prawy klik ponownie → odznaczenie
+  • Przycisk „Odznacz wszystkie" — kasuje wszystkie oznaczenia danego sprawdzenia
+
+LICZNIK
+Nad tabelą widoczny jest licznik ✓ N zaznaczonych aktualizowany na bieżąco.
+
+TRWAŁOŚĆ
+Oznaczenia są zapisywane w pliku marks.json obok programu. Przypisane są do konkretnego pliku MDB i konkretnego sprawdzenia — przeżywają zamknięcie programu.
+
+TYPOWY PRZEPŁYW PRACY
+  1. Uruchom analizę dla miesiąca
+  2. Otwórz program Insert GT obok
+  3. W KSeF Checker oznaczaj faktury prawym klikiem w miarę ich poprawiania
+  4. Po zakończeniu uruchom analizę ponownie — liczba błędów powinna spaść do zera
+"""),
+        ("Analiza wielu baz (Batch)", """
+Zakładka Wiele baz (batch) pozwala sprawdzić kilka firm jednocześnie.
+
+JAK UŻYWAĆ
+  1. Kliknij ＋ Dodaj bazy MDB — wybierz wiele plików naraz (Ctrl+klik)
+  2. Ustaw wspólny okres analizy
+  3. Kliknij ▶ Sprawdź wszystkie
+  4. Wyniki pojawią się w tabeli z podsumowaniem per firma
+
+EKSPORT ZBIORCZY
+Kliknij ↓ Excel zbiorczy — plik zawiera:
+  • Arkusz Podsumowanie zbiorcze — jedna linia per firma
+  • Arkusz Wszystkie błędy — pełna lista problemów ze wszystkich baz
+  • Arkusz ✉ Do sprawdzenia — checklist do przekazania klientom
+
+OTWARCIE FIRMY W TRYBIE SZCZEGÓŁOWYM
+Dwuklik na wierszu w tabeli zbiorczej otwiera tę bazę w zakładce Pojedyncza baza i automatycznie uruchamia analizę.
+"""),
+        ("Historia analiz", """
+Kliknij 🕐 Historia w nagłówku programu, aby zobaczyć poprzednie analizy.
+
+  • Wyniki są zapisywane automatycznie po każdej analizie
+  • Przechowywanych jest do 40 ostatnich wpisów
+  • Dla tej samej bazy i okresu poprzedni wynik jest nadpisywany
+
+WCZYTYWANIE Z HISTORII
+Kliknij Otwórz przy wybranym wpisie — program wczyta zapisane wyniki bez ponownej analizy bazy. Przydatne gdy baza MDB jest niedostępna (np. klient zdalny).
+"""),
+        ("Eksport do Excel", """
+Kliknij ↓ Excel w pasku narzędzi po zakończeniu analizy.
+
+ZAWARTOŚĆ PLIKU
+
+Arkusz „Raport" — tabela problemów:
+  • Typ (BŁĄD / OSTRZEŻENIE)
+  • Sprawdzenie — nazwa wykrytego problemu
+  • Liczba rekordów — ile faktur dotyczy
+  • Szczegóły — sumy rozbieżności
+  • Wyjaśnienie — podstawa prawna
+
+Arkusz „Szczegóły" — wszystkie wiersze z nieprawidłowościami z pełnymi danymi faktur (numery, daty, kwoty, kontrahenci).
+
+Nazwa pliku jest generowana automatycznie: KSeF_NazwaFirmy_Maj_2024.xlsx
+"""),
+        ("Ustawienia", """
+Kliknij ⚙ Ustawienia w prawym górnym rogu.
+
+ZAKŁADKA „SPRAWDZENIA"
+Włącz lub wyłącz poszczególne sprawdzenia. Przyciski:
+  • Zaznacz wszystkie — włącz wszystkie
+  • Odznacz wszystkie — wyłącz wszystkie
+  • Przywróć domyślne — wróć do ustawień fabrycznych
+
+ZAKŁADKA „PARAMETRY"
+
+  Tolerancja różnic kwotowych (domyślnie: 0,05 zł)
+    Różnice poniżej tej wartości są ignorowane (zaokrąglenia groszy).
+
+  Próg ostrzeżenia „brak KSeF" (domyślnie: 15%)
+    Przy jakim odsetku faktur bez numeru KSeF wyświetlić ostrzeżenie.
+
+  Dni bufora dla „cały zakres" (domyślnie: 3 dni)
+    Ile ostatnich dni ignorować jako „za świeże do zaksięgowania"
+    (faktury pobrane z KSeF mogą jeszcze nie być zaksięgowane).
+"""),
+        ("Aktualizacje", """
+Program automatycznie sprawdza dostępność aktualizacji przy każdym uruchomieniu (raz dziennie).
+
+Gdy dostępna jest nowa wersja, w górnej części okna pojawia się baner:
+  🔔 Dostępna nowa wersja v1.x.x  —  [  Aktualizuj  ]
+
+PROCES AKTUALIZACJI
+  1. Kliknij Aktualizuj
+  2. Postęp pobierania jest widoczny na pasku
+  3. Może pojawić się okno UAC „Czy pozwolić tej aplikacji..." — kliknij Tak
+  4. Po instalacji kliknij 🔄 Uruchom ponownie
+  5. Program automatycznie uruchamia nową wersję
+
+Program nie zamyka się podczas pobierania — można pracować do momentu kliknięcia „Uruchom ponownie".
+"""),
+        ("Opis sprawdzeń", """
+KOMPLETNOŚĆ
+
+  ✗ Niezaksięgowane zakupy z KSeF
+    Faktury zakupowe z KSeF bez żadnego wpisu w KSIEGA ani VATZAKUPY.
+    Co zrobić: zaksięgować fakturę w Insert GT.
+
+  ✗ Niezaksięgowana sprzedaż z KSeF
+    Faktury sprzedażowe z KSeF bez wpisu w KSIEGA lub VATSPRZEDAZ.
+
+  ✗ Niespójność KSIEGA ↔ VATZAKUPY
+    Faktura jest w księdze ale nie ma jej w rejestrze VAT (lub odwrotnie).
+    Faktura powinna być jednocześnie w obu miejscach.
+
+─────────────────────────────────────────────────────────────
+
+KWOTY
+
+  ✗/⚠ Niezgodności kwotowe — KSeF vs VATZAKUPY
+    Porównuje netto, VAT i brutto między KSeF a rejestrem VAT zakupów.
+    Kolumny Δ Netto / Δ VAT / Δ Brutto pokazują różnicę (0,00 = zgodne).
+    Obsługuje faktury ZAKUP50 (50% odliczenie) i faktury zwolnione z VAT.
+
+  ⚠ Niezgodności kwotowe — KSeF vs KSIEGA
+    Porównuje netto z KSeF z sumą kosztów w księdze.
+    Uwzględnia kolumnę % kosztu (np. 75% dla samochodu).
+
+  ✗/⚠ Niezgodności kwotowe sprzedaży — KSeF vs VATSPRZEDAZ
+    Porównuje kwoty faktur sprzedażowych.
+
+─────────────────────────────────────────────────────────────
+
+DATY
+
+  ⚠ Zakupy ujęte poza dopuszczalnym oknem
+    Art. 86 ust. 11 ustawy o VAT pozwala ująć fakturę w miesiącu
+    wystawienia lub 3 kolejnych miesiącach (M+1, M+2, M+3).
+    Flagowane są tylko ujęcia WSTECZ lub po upływie M+3.
+    Ujęcie w M+1/M+2/M+3 jest legalne i NIE jest flagowane.
+
+  ⚠ Sprzedaż w złym miesiącu (VATSPRZEDAZ)
+    Faktura sprzedaży ujęta w innym miesiącu niż data sprzedaży.
+
+─────────────────────────────────────────────────────────────
+
+JAKOŚĆ
+
+  ⚠ Zakupy bez numeru KSeF
+    Faktury w rejestrze VAT bez numeru KSeF (ręczne, zagraniczne, noty).
+    Ostrzeżenie gdy odsetek przekroczy próg z Ustawień (domyślnie 15%).
+
+  ⚠ Wpisy tylko w KSIEGA (ZUS, opłaty, wynagrodzenia)
+    Wydatki w księdze bez odpowiednika w rejestrze VAT — ZUS, opłaty
+    bankowe, wynagrodzenia, amortyzacja. Normalny rodzaj wydatku,
+    wyświetlany do weryfikacji kompletności.
+
+  ✗ Duplikaty w VATZAKUPY
+    Ten sam numer KSeF zaksięgowany więcej niż raz — zawyża VAT
+    i powoduje błąd w pliku JPK_VAT.
+
+  ✗ Duplikaty w VATSPRZEDAZ
+    Jak wyżej, dla rejestru sprzedaży.
+
+─────────────────────────────────────────────────────────────
+
+KOREKTY
+
+  ✗ Niezaksięgowane korekty zakupów
+    Faktury korygujące (ujemne) z KSeF bez zaksięgowania.
+    Niezaksięgowana korekta zawyża odliczony VAT i koszty.
+
+  ✗ Niezaksięgowane korekty sprzedaży
+    Analogicznie dla faktur korygujących sprzedaż.
+
+─────────────────────────────────────────────────────────────
+
+COMPLIANCE
+
+  ✗ Błędny NIP kontrahenta
+    NIP sprzedawcy w KSeF różni się od NIP w rejestrze VAT.
+    Niezgodny NIP powoduje odrzucenie pliku JPK przez urząd.
+
+  ✗ Przekroczony termin odliczenia VAT (>3 miesiące)
+    Czas między datą wystawienia a datą ujęcia przekracza 3 miesiące
+    kalendarzowe (art. 86 ust. 11). Kolumna „Miesięcy po terminie"
+    pokazuje skalę przekroczenia.
+
+  ⚠ Split payment (MPP) — faktury ≥ 15 000 zł
+    Faktury bez oznaczenia MPP powyżej progu.
+    UWAGA: MPP jest wymagane wyłącznie dla towarów z Załącznika 15
+    do ustawy o VAT — weryfikuj ręcznie czy obowiązek dotyczy faktury.
+
+  ⚠ Faktury walutowe (nie-PLN)
+    Faktury w walutach obcych wymagające przeliczenia na PLN wg kursu
+    NBP z dnia poprzedzającego wystawienie (art. 31a ustawy o VAT).
+
+  ⚠ Ten sam NIP, różne nazwy firmy
+    Możliwe literówki, zmiany nazwy firmy lub błędy przy wprowadzaniu.
+"""),
+        ("Najczęstsze pytania", """
+P: Program wyświetla błąd „Brak sterownika Microsoft Access"
+O: Zainstaluj sterownik ze strony Microsoft lub użyj instalatora
+   z sufiksem _z_AccessEngine. Jeśli masz 32-bitowy Microsoft Office,
+   musisz użyć 32-bitowej wersji sterownika.
+
+─────────────────────────────────────────────────────────────
+
+P: Faktura jest w KSeF ale program pokazuje ją jako niezaksięgowaną
+O: Sprawdź czy numer KSeF w Insert GT zgadza się dokładnie z numerem
+   w KSeF (bez dodatkowych spacji). Możliwa przyczyna to literówka lub
+   brak numeru KSeF przy ręcznym wprowadzaniu faktury.
+
+─────────────────────────────────────────────────────────────
+
+P: Program pokazuje stare korekty sprzed roku jako niezaksięgowane
+O: Sprawdzenie korekt działa w zakresie wybranego okresu. Jeśli stare
+   korekty nie powinny być księgowane, możesz wyłączyć to sprawdzenie
+   w Ustawieniach.
+
+─────────────────────────────────────────────────────────────
+
+P: Część faktur ma status „zły miesiąc" choć je zaksięgowałem w M+1
+O: Ujęcie faktury zakupowej w M+1, M+2 lub M+3 jest LEGALNE i program
+   tego nie flaguje. Jeśli widzisz ostrzeżenie, faktura jest ujęta albo
+   wstecz (przed miesiącem wystawienia) albo po upływie 3 miesięcy.
+
+─────────────────────────────────────────────────────────────
+
+P: Co znaczy „Δ Brutto = 50,00 zł"?
+O: Kwota brutto w KSeF różni się od kwoty w rejestrze VAT o 50 zł.
+   Może to być: błędna wartość przy ręcznym wpisie, zaokrąglenie lub
+   zaksięgowanie innej faktury pod tym numerem KSeF.
+
+─────────────────────────────────────────────────────────────
+
+P: Gdzie są zapisywane ustawienia i historia?
+O: W folderze instalacji (domyślnie C:\\Program Files\\KSeF Checker\\):
+   • settings.json — ustawienia programu
+   • history.json  — historia analiz (maks. 40 wpisów)
+   • marks.json    — oznaczenia faktur „do sprawdzenia"
+"""),
+    ]
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Pomoc — KSeF Checker")
+        self.geometry("1020x680")
+        self.minsize(700, 480)
+        self.configure(bg=BG)
+        self.resizable(True, True)
+        self._build()
+        self.lift(); self.focus_force()
+
+    def _build(self):
+        # nagłówek
+        hdr = tk.Frame(self, bg=BG2)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="❓  Pomoc — KSeF Checker", font=FMED,
+                 bg=BG2, fg=ACCENT, padx=16, pady=10).pack(side="left")
+        tk.Label(hdr, text=f"v{VERSION}", font=FSM,
+                 bg=BG2, fg=TXT3, padx=4).pack(side="left")
+        tk.Button(hdr, text="✕", font=FSM, bg=BG2, fg=TXT3,
+                  activebackground=BG3, relief="flat", padx=10, pady=8,
+                  cursor="hand2", command=self.destroy).pack(side="right", padx=8)
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+
+        # split: lewy TOC + prawy content
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True)
+
+        # ── lewy panel: spis treści ───────────────────────────────────────
+        left = tk.Frame(body, bg=BG2, width=210)
+        left.pack(side="left", fill="y"); left.pack_propagate(False)
+        tk.Frame(body, bg=BORDER, width=1).pack(side="left", fill="y")
+
+        tk.Label(left, text="SPIS TREŚCI", font=(_SYS,8,"bold"),
+                 bg=BG2, fg=TXT3, padx=14, pady=10).pack(anchor="w")
+
+        self._toc_btns = []
+        for i, (title, _) in enumerate(self._SECTIONS):
+            b = tk.Button(left, text=title, font=FSM,
+                          bg=BG2, fg=TXT2, anchor="w",
+                          activebackground=BG3, activeforeground=TXT,
+                          relief="flat", padx=14, pady=5, cursor="hand2",
+                          command=lambda idx=i: self._goto(idx))
+            b.pack(fill="x")
+            b.bind("<Enter>", lambda e, _b=b: _b.config(fg=TXT))
+            b.bind("<Leave>", lambda e, _b=b, _i=i: _b.config(
+                fg=ACCENT if self._active == _i else TXT2))
+            self._toc_btns.append(b)
+
+        # ── prawy panel: treść ────────────────────────────────────────────
+        right = tk.Frame(body, bg=BG)
+        right.pack(side="left", fill="both", expand=True)
+
+        vsb = ttk.Scrollbar(right, orient="vertical")
+        vsb.pack(side="right", fill="y")
+
+        self._txt = tk.Text(right, bg=BG, fg=TXT, font=FS,
+                            relief="flat", bd=0, padx=20, pady=14,
+                            wrap="word", cursor="arrow",
+                            yscrollcommand=vsb.set,
+                            state="disabled", spacing1=2, spacing3=4)
+        self._txt.pack(fill="both", expand=True)
+        vsb.config(command=self._txt.yview)
+
+        self._txt.bind("<MouseWheel>",
+                       lambda e: self._txt.yview_scroll(-1*(e.delta//120),"units"))
+
+        # tagi formatowania
+        self._txt.tag_configure("h1",    font=(_SYS,15,"bold"), foreground=ACCENT,
+                                spacing1=18, spacing3=6)
+        self._txt.tag_configure("h2",    font=(_SYS,11,"bold"), foreground=TXT,
+                                spacing1=14, spacing3=4)
+        self._txt.tag_configure("sep",   foreground=TXT3)
+        self._txt.tag_configure("mono",  font=(FMONO,9),        foreground=TXT2)
+        self._txt.tag_configure("note",  foreground=WARN)
+        self._txt.tag_configure("ok",    foreground=OK)
+        self._txt.tag_configure("err",   foreground=ERR)
+        self._txt.tag_configure("body",  font=FS, foreground=TXT,  spacing1=1)
+
+        # wypełnij treść
+        self._active = 0
+        self._section_marks = []
+        self._render_all()
+        self._highlight_toc(0)
+
+        # śledź widoczną sekcję przy scrollowaniu
+        vsb.config(command=self._on_scroll)
+
+    def _on_scroll(self, *args):
+        self._txt.yview(*args)
+        self._update_active_section()
+
+    def _update_active_section(self):
+        # sprawdź która sekcja jest aktualnie widoczna
+        first_visible = self._txt.index("@0,0")
+        for i, mark in reversed(list(enumerate(self._section_marks))):
+            if self._txt.compare(mark, "<=", first_visible):
+                if i != self._active:
+                    self._active = i
+                    self._highlight_toc(i)
+                return
+
+    def _highlight_toc(self, idx):
+        for i, b in enumerate(self._toc_btns):
+            b.config(bg=BG3 if i == idx else BG2,
+                     fg=ACCENT if i == idx else TXT2)
+
+    def _goto(self, idx):
+        self._active = idx
+        self._highlight_toc(idx)
+        mark = self._section_marks[idx]
+        self._txt.see(mark)
+
+    def _render_all(self):
+        self._txt.config(state="normal")
+        self._txt.delete("1.0", "end")
+        self._section_marks.clear()
+
+        for i, (title, content) in enumerate(self._SECTIONS):
+            # zapisz markę sekcji
+            mark = f"sec_{i}"
+            self._txt.mark_set(mark, "end-1c")
+            self._txt.mark_gravity(mark, "left")
+            self._section_marks.append(mark)
+
+            # nagłówek sekcji
+            if i > 0:
+                self._txt.insert("end", "\n")
+            self._txt.insert("end", f"{title}\n", "h1")
+
+            # treść linii po linii
+            for line in content.strip().split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("─────"):
+                    self._txt.insert("end", f"{stripped}\n", "sep")
+                elif stripped.isupper() and len(stripped) < 60 and stripped == stripped.upper() and len(stripped) > 3:
+                    self._txt.insert("end", f"\n{stripped}\n", "h2")
+                elif stripped.startswith("✗"):
+                    self._txt.insert("end", f"  {stripped}\n", "err")
+                elif stripped.startswith("✓"):
+                    self._txt.insert("end", f"  {stripped}\n", "ok")
+                elif stripped.startswith("⚠"):
+                    self._txt.insert("end", f"  {stripped}\n", "note")
+                elif stripped.startswith("•"):
+                    self._txt.insert("end", f"  {stripped}\n", "body")
+                elif stripped.startswith("P:"):
+                    self._txt.insert("end", f"\n{stripped}\n", "h2")
+                elif stripped.startswith("O:"):
+                    self._txt.insert("end", f"{stripped}\n", "body")
+                elif any(stripped.startswith(p) for p in ("C:\\","KSeF_","/","settings","history","marks")):
+                    self._txt.insert("end", f"    {stripped}\n", "mono")
+                else:
+                    self._txt.insert("end", f"{line}\n", "body")
+
+        self._txt.config(state="disabled")
+
+
 # ── invoice detail popup ──────────────────────────────────────────────────────
 class InvoiceDetailPopup(tk.Toplevel):
     """Wizualne porównanie KSEF / Rejestr / Księga dla wybranej faktury."""
@@ -1202,7 +1682,9 @@ class InvoiceDetailPopup(tk.Toplevel):
                     rf.pack(fill="x", padx=14, pady=3)
                     dname = (f.replace(" (KSeF)","")
                               .replace(" (VAT rej.)","")
-                              .replace(" (rej. sp.)",""))
+                              .replace(" (rej. sp.)","")
+                              .replace("Kwota w KSIEGA","Netto")
+                              .replace("SPRZEDAZ_BRUTTO","Brutto"))
                     tk.Label(rf, text=dname, font=FSM, bg=BG2,
                              fg=TXT3, width=9, anchor="e").pack(side="left")
                     tk.Label(rf, text=val, font=(FMONO,11,"bold"),
@@ -1369,6 +1851,7 @@ class App(tk.Tk):
 
         _hdr_btn("⚙  Ustawienia", self._open_settings)
         _hdr_btn("🕐  Historia",   self._open_history)
+        _hdr_btn("❓  Pomoc",      self._open_help)
         _cur = self._cfg.get("theme","dark")
         _icon = THEMES[_cur]["THEME_ICON"]
         _lbl  = THEMES[_cur]["THEME_LABEL"]
@@ -1672,6 +2155,9 @@ class App(tk.Tk):
             self.file_lbl.config(text=f"📂  {short}", fg=A2, bg=BG3)
             self.btn.config(state="normal")
         threading.Thread(target=self._check_updates, daemon=True).start()
+
+    def _open_help(self):
+        HelpWindow(self)
 
     def _open_settings(self):
         SettingsWindow(self, self._cfg, self._on_settings_saved, app_ref=self)
