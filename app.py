@@ -849,22 +849,67 @@ class UpdateDialog(tk.Toplevel):
 
     # ── faza 2: instalacja w tle ──────────────────────────────────────────
     def _start_install(self, installer_path):
-        self._lbl.config(text="Instaluję…  (program pozostaje otwarty)", fg=TXT2)
+        self._lbl.config(
+            text="Instaluję…  (może pojawić się okno uprawnień administracyjnych)", fg=TXT2)
         self._prog.config(mode="indeterminate", value=0)
         self._prog.start(12)
         self._btn.config(state="disabled", text="Proszę czekać…")
 
-        import subprocess
-
         def run():
             try:
-                proc = subprocess.Popen(
-                    [installer_path, "/VERYSILENT", "/NORESTART"],
-                    creationflags=subprocess.CREATE_NO_WINDOW)
-                proc.wait()
+                import ctypes
+                import ctypes.wintypes as wt
+
+                # ShellExecuteEx z runas = właściwe żądanie UAC + czekanie na
+                # FAKTYCZNY proces instalatora (nie pośredni launcher)
+                class SHELLEXECUTEINFOW(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize",         wt.DWORD),
+                        ("fMask",          wt.ULONG),
+                        ("hwnd",           wt.HWND),
+                        ("lpVerb",         wt.LPCWSTR),
+                        ("lpFile",         wt.LPCWSTR),
+                        ("lpParameters",   wt.LPCWSTR),
+                        ("lpDirectory",    wt.LPCWSTR),
+                        ("nShow",          ctypes.c_int),
+                        ("hInstApp",       wt.HINSTANCE),
+                        ("lpIDList",       ctypes.c_void_p),
+                        ("lpClass",        wt.LPCWSTR),
+                        ("hkeyClass",      wt.HKEY),
+                        ("dwHotKey",       wt.DWORD),
+                        ("hIconOrMonitor", wt.HANDLE),
+                        ("hProcess",       wt.HANDLE),
+                    ]
+
+                SEE_MASK_NOCLOSEPROCESS = 0x00000040
+                sei = SHELLEXECUTEINFOW()
+                sei.cbSize       = ctypes.sizeof(sei)
+                sei.fMask        = SEE_MASK_NOCLOSEPROCESS
+                sei.hwnd         = None
+                sei.lpVerb       = "runas"          # wymuś UAC / admin
+                sei.lpFile       = installer_path
+                sei.lpParameters = "/VERYSILENT /NORESTART"
+                sei.lpDirectory  = None
+                sei.nShow        = 0                # SW_HIDE
+                sei.hProcess     = None
+
+                ok = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
+                if not ok or not sei.hProcess:
+                    err = ctypes.windll.kernel32.GetLastError()
+                    raise RuntimeError(
+                        f"Nie udało się uruchomić instalatora "
+                        f"(ShellExecuteEx error {err}). "
+                        f"Pobierz instalator ręcznie ze strony GitHub.")
+
+                # Czekaj na zakończenie instalatora (bez limitu czasu)
+                INFINITE = 0xFFFFFFFF
+                ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, INFINITE)
+                ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+
                 self.after(0, self._install_done)
             except Exception as e:
-                self.after(0, lambda: self._lbl.config(text=f"Błąd instalacji: {e}", fg=ERR))
+                self.after(0, lambda: self._lbl.config(
+                    text=f"Błąd instalacji: {e}", fg=ERR))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -882,9 +927,30 @@ class UpdateDialog(tk.Toplevel):
             command=self._restart)
 
     def _restart(self):
-        """Zamknij aplikację — nowa wersja uruchomi się ze skrótu/taskbara."""
-        import time
-        time.sleep(0.2)
+        """Uruchom nową wersję i zamknij obecną."""
+        import time, subprocess, winreg
+        # Znajdź ścieżkę instalacji z rejestru
+        new_exe = None
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for sub in (
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KSeF Checker_is1",
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\KSeF Checker_is1",
+            ):
+                try:
+                    with winreg.OpenKey(root, sub) as k:
+                        path = winreg.QueryValueEx(k, "InstallLocation")[0]
+                        candidate = os.path.join(path, "KSeF_Checker.exe")
+                        if os.path.exists(candidate):
+                            new_exe = candidate
+                            break
+                except Exception:
+                    continue
+            if new_exe:
+                break
+        if new_exe:
+            time.sleep(0.3)
+            subprocess.Popen([new_exe], creationflags=subprocess.CREATE_NO_WINDOW)
+        time.sleep(0.3)
         os._exit(0)
 
     def _cancel(self):
