@@ -531,37 +531,58 @@ def check_duplicates_vatsp(d, cfg=None):
                explanation="Duplikat w VATSPRZEDAZ zawyży VAT należny i przychód.")
 
 def check_advance_invoices(d, cfg=None):
-    """Wylistowuje faktury zaliczkowe i rozliczeniowe do ręcznej weryfikacji."""
-    if "INVOICE_TYPE" not in d["ksef_spr"].columns:
-        return None
+    """Wylistowuje faktury zaliczkowe i rozliczeniowe (zakupy i sprzedaż) do ręcznej weryfikacji."""
     TYPES = {"Zal":"Zaliczkowa", "KorZal":"Korekta zaliczkowej", "Roz":"Rozliczeniowa (końcowa)"}
-    spr = d["ksef_spr"].copy()
-    adv = spr[spr["INVOICE_TYPE"].str.strip().isin(TYPES)].copy()
-    if adv.empty:
+
+    frames = []
+    for df_src, kierunek, name_col in [
+        (d["ksef_spr"], "Sprzedaż", "BUYER_NAME"),
+        (d["ksef_zak"], "Zakup",    "SELLER_NAME"),
+    ]:
+        if "INVOICE_TYPE" not in df_src.columns:
+            continue
+        sub = df_src[df_src["INVOICE_TYPE"].str.strip().isin(TYPES)].copy()
+        if sub.empty:
+            continue
+        sub["Kierunek"] = kierunek
+        sub["Kontrahent"] = sub[name_col] if name_col in sub.columns else ""
+        frames.append(sub)
+
+    if not frames:
         return ok("Faktury zaliczkowe / rozliczeniowe: brak",
                   "Brak faktur typu Zal, KorZal lub Roz w wybranym okresie.")
-    adv["Typ faktury"] = adv["INVOICE_TYPE"].str.strip().map(TYPES)
-    cols = ["INVOICE_NUMBER","INVOICE_TYPE","ISSUE_DATE","BUYER_NAME",
+
+    import pandas as pd_inner
+    adv = pd_inner.concat(frames, ignore_index=True)
+
+    cols = ["INVOICE_NUMBER","INVOICE_TYPE","Kierunek","ISSUE_DATE","Kontrahent",
             "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]
     df = adv[[c for c in cols if c in adv.columns]].copy()
+
     total_gross = pd.to_numeric(adv["GROSS_AMOUNT"], errors="coerce").fillna(0).sum()
     n_zal = (adv["INVOICE_TYPE"].str.strip() == "Zal").sum()
     n_roz = (adv["INVOICE_TYPE"].str.strip() == "Roz").sum()
     n_kor = (adv["INVOICE_TYPE"].str.strip() == "KorZal").sum()
+    n_spr = (adv["Kierunek"] == "Sprzedaż").sum()
+    n_zak = (adv["Kierunek"] == "Zakup").sum()
+
     parts = []
     if n_zal: parts.append(f"Zal: {n_zal}")
     if n_roz: parts.append(f"Roz: {n_roz}")
     if n_kor: parts.append(f"KorZal: {n_kor}")
+    if n_spr: parts.append(f"sprzedaż: {n_spr}")
+    if n_zak: parts.append(f"zakup: {n_zak}")
+
     return warn(f"Faktury zaliczkowe / rozliczeniowe: {len(adv)}",
                 "  |  ".join(parts) + f"  |  Łącznie: {total_gross:,.2f} zł",
                 rows=rows_to_dicts(df.rename(columns={
                     "INVOICE_NUMBER":"Nr faktury","INVOICE_TYPE":"Typ",
-                    "ISSUE_DATE":"Data wyst.","BUYER_NAME":"Nabywca",
+                    "ISSUE_DATE":"Data wyst.","Kontrahent":"Kontrahent",
                     "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)",
                     "GROSS_AMOUNT":"Brutto (KSeF)"})),
                 explanation="Faktury zaliczkowe (Zal), korekty zaliczek (KorZal) i rozliczeniowe (Roz) "
-                            "wymagają ręcznej weryfikacji w programie księgowym — "
-                            "ich ujęcie w KSIEGA i rejestrach VAT zależy od indywidualnego sposobu księgowania.")
+                            "po stronie zakupów i sprzedaży — wymagają ręcznej weryfikacji w programie "
+                            "księgowym. Ich ujęcie w KSIEGA i rejestrach VAT zależy od sposobu księgowania.")
 
 
 def check_sales_amounts_vs_ksiega(d, cfg=None):
@@ -615,7 +636,10 @@ def check_sales_amounts_vs_ksiega(d, cfg=None):
 def check_corrections_purchases(d, cfg=None):
     # używaj okresu — ksef_zak_all obejmowałby korekty z całej historii bazy
     zak = d["ksef_zak"]
-    kor = zak[zak["GROSS_AMOUNT"] < 0].copy()
+    # wyklucz KorZal — obsługiwane przez check_advance_invoices
+    if "INVOICE_TYPE" in zak.columns:
+        zak = zak[~zak["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal","Roz"])]
+    kor = zak[pd.to_numeric(zak["GROSS_AMOUNT"], errors="coerce").fillna(0) < 0].copy()
     if kor.empty:
         return ok("Korekty zakupów: brak lub wszystkie OK",
                   "Brak faktur korygujących zakupy w wybranym okresie.")
