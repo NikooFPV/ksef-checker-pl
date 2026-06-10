@@ -2059,6 +2059,11 @@ class App(tk.Tk):
             command=lambda: self._search_var.set(""))
         # pokazywany tylko gdy jest tekst (zarządzane przez _on_search)
 
+        # ── stopka sum netto (dół lewego panelu) ─────────────────────────
+        tk.Frame(left, bg=BORDER, height=1).pack(side="bottom", fill="x")
+        self._netto_footer = tk.Frame(left, bg=BG2)
+        self._netto_footer.pack(side="bottom", fill="x")
+
         left_sb = ttk.Scrollbar(left, orient="vertical")
         left_sb.pack(side="right", fill="y")
         self._left_cv = tk.Canvas(left, bg=BG, highlightthickness=0,
@@ -2338,6 +2343,8 @@ class App(tk.Tk):
 
     def _clear_all(self):
         self._stop_file_watch()
+        if hasattr(self, "_netto_footer"):
+            for w in self._netto_footer.winfo_children(): w.destroy()
         for w in self.list_frame.winfo_children(): w.destroy()
         self._cards_anchor = None
         self._clear_detail()
@@ -2398,31 +2405,7 @@ class App(tk.Tk):
                 tk.Label(chip, text=lbl, font=(_SYS, 8),
                          bg=BG3, fg=TXT3, padx=14, pady=4).pack()
 
-            # ── VAT okresu ─────────────────────────────────────────────────
-            vat_nal = s.get("vat_naliczony")
-            vat_naz = s.get("vat_nalezny")
-            vat_sal = s.get("vat_saldo")
-            if vat_nal is not None or vat_naz is not None:
-                vb = tk.Frame(self.list_frame, bg=BG)
-                vb.pack(fill="x", padx=4, pady=(0,10))
-                tk.Label(vb, text="VAT OKRESU", font=(_SYS,7,"bold"),
-                         bg=BG, fg=TXT3, padx=2, pady=2).pack(side="left", anchor="s")
-
-                def _vat_chip(parent, lbl, val, col):
-                    if val is None: return
-                    c = tk.Frame(parent, bg=BG3)
-                    c.pack(side="left", padx=(0,6))
-                    tk.Label(c, text=f"{val:,.2f} zł", font=(FMONO,11,"bold"),
-                             bg=BG3, fg=col, padx=12, pady=5).pack()
-                    tk.Label(c, text=lbl, font=(_SYS,7),
-                             bg=BG3, fg=TXT3, padx=12, pady=3).pack()
-
-                _vat_chip(vb, "naliczony (VAT)",  vat_nal, A2)
-                _vat_chip(vb, "należny (VAT)",    vat_naz, ERR)
-                if vat_sal is not None:
-                    sal_col = ERR if vat_sal > 0 else OK
-                    sal_lbl = "do zapłaty" if vat_sal > 0 else "do zwrotu" if vat_sal < 0 else "saldo 0"
-                    _vat_chip(vb, sal_lbl, abs(vat_sal), sal_col)
+            # VAT chipy usunięte — sumy netto w stopce lewego panelu
 
         self._checks = res.get("checks", [])
         # reset filter + update button styles
@@ -2436,8 +2419,53 @@ class App(tk.Tk):
         self._cards_anchor = tk.Frame(self.list_frame, bg=BG, height=0)
         self._cards_anchor.pack()
         self._rebuild_list(auto_select=True)
-        # uruchom obserwatora pliku
+        self._update_netto_footer(res.get("summary", {}))
         self._start_file_watch()
+
+    def _update_netto_footer(self, s):
+        for w in self._netto_footer.winfo_children():
+            w.destroy()
+        ksef_zak = s.get("ksef_netto_zak")
+        ksef_spr = s.get("ksef_netto_spr")
+        reg_zak  = s.get("reg_netto_zak")
+        reg_spr  = s.get("reg_netto_spr")
+        ks_zak   = s.get("ks_netto_zak")
+        ks_spr   = s.get("ks_netto_spr")
+        if ksef_zak is None: return
+
+        def _fmt(v):
+            try: return f"{float(v):,.2f}"
+            except: return "—"
+
+        f = self._netto_footer
+        # nagłówek
+        hdr = tk.Frame(f, bg=BG2)
+        hdr.pack(fill="x", padx=10, pady=(6,2))
+        tk.Label(hdr, text="SUMY NETTO", font=(_SYS,7,"bold"),
+                 bg=BG2, fg=TXT3).pack(side="left")
+
+        # tabela: label | KSIEGA | REJESTR | KSEF
+        tbl = tk.Frame(f, bg=BG2)
+        tbl.pack(fill="x", padx=8, pady=(0,6))
+
+        cols_hdr = ["", "Księga", "Rejestr", "KSeF"]
+        cols_col = [TXT3, TXT2, TXT2, ACCENT]
+        for j, (ch, cc) in enumerate(zip(cols_hdr, cols_col)):
+            tk.Label(tbl, text=ch, font=(_SYS,8,"bold"), bg=BG2,
+                     fg=cc, width=(12 if j==0 else 13), anchor="e").grid(
+                     row=0, column=j, padx=(0,2), sticky="e")
+
+        rows = [
+            ("Zakupy",   ks_zak,  reg_zak,  ksef_zak, A2),
+            ("Sprzedaż", ks_spr,  reg_spr,  ksef_spr, ERR),
+        ]
+        for i, (lbl, v_ks, v_reg, v_ksef, row_col) in enumerate(rows, 1):
+            tk.Label(tbl, text=lbl, font=FSM, bg=BG2,
+                     fg=TXT3, width=12, anchor="w").grid(row=i, column=0, sticky="w")
+            for j, val in enumerate([v_ks, v_reg, v_ksef], 1):
+                tk.Label(tbl, text=_fmt(val), font=(FMONO,9),
+                         bg=BG2, fg=row_col, width=13, anchor="e").grid(
+                         row=i, column=j, padx=(0,2), sticky="e")
 
     def _on_search(self):
         self._search_text = self._search_var.get().strip().lower()

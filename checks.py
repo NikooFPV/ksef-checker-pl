@@ -530,14 +530,48 @@ def check_duplicates_vatsp(d, cfg=None):
                    "SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)","KSEF":"Nr KSeF"})),
                explanation="Duplikat w VATSPRZEDAZ zawyży VAT należny i przychód.")
 
+def check_advance_invoices(d, cfg=None):
+    """Wylistowuje faktury zaliczkowe i rozliczeniowe do ręcznej weryfikacji."""
+    if "INVOICE_TYPE" not in d["ksef_spr"].columns:
+        return None
+    TYPES = {"Zal":"Zaliczkowa", "KorZal":"Korekta zaliczkowej", "Roz":"Rozliczeniowa (końcowa)"}
+    spr = d["ksef_spr"].copy()
+    adv = spr[spr["INVOICE_TYPE"].str.strip().isin(TYPES)].copy()
+    if adv.empty:
+        return ok("Faktury zaliczkowe / rozliczeniowe: brak",
+                  "Brak faktur typu Zal, KorZal lub Roz w wybranym okresie.")
+    adv["Typ faktury"] = adv["INVOICE_TYPE"].str.strip().map(TYPES)
+    cols = ["INVOICE_NUMBER","INVOICE_TYPE","ISSUE_DATE","BUYER_NAME",
+            "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]
+    df = adv[[c for c in cols if c in adv.columns]].copy()
+    total_gross = pd.to_numeric(adv["GROSS_AMOUNT"], errors="coerce").fillna(0).sum()
+    n_zal = (adv["INVOICE_TYPE"].str.strip() == "Zal").sum()
+    n_roz = (adv["INVOICE_TYPE"].str.strip() == "Roz").sum()
+    n_kor = (adv["INVOICE_TYPE"].str.strip() == "KorZal").sum()
+    parts = []
+    if n_zal: parts.append(f"Zal: {n_zal}")
+    if n_roz: parts.append(f"Roz: {n_roz}")
+    if n_kor: parts.append(f"KorZal: {n_kor}")
+    return warn(f"Faktury zaliczkowe / rozliczeniowe: {len(adv)}",
+                "  |  ".join(parts) + f"  |  Łącznie: {total_gross:,.2f} zł",
+                rows=rows_to_dicts(df.rename(columns={
+                    "INVOICE_NUMBER":"Nr faktury","INVOICE_TYPE":"Typ",
+                    "ISSUE_DATE":"Data wyst.","BUYER_NAME":"Nabywca",
+                    "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)",
+                    "GROSS_AMOUNT":"Brutto (KSeF)"})),
+                explanation="Faktury zaliczkowe (Zal), korekty zaliczek (KorZal) i rozliczeniowe (Roz) "
+                            "wymagają ręcznej weryfikacji w programie księgowym — "
+                            "ich ujęcie w KSIEGA i rejestrach VAT zależy od indywidualnego sposobu księgowania.")
+
+
 def check_sales_amounts_vs_ksiega(d, cfg=None):
     """Porównuje kwoty netto sprzedaży z KSeF z przychodem zapisanym w KSIEGA."""
     tol = d["tol"]
-    # Faktury zaliczkowe (Zal/KorZal) są w PKPiR traktowane inaczej —
-    # przychód księgowany dopiero przy fakturze końcowej, nie przy zaliczce
+    # Zal/KorZal/Roz mają osobne sprawdzenie (check_advance_invoices) —
+    # kwoty w KSIEGA nie dają się automatycznie zweryfikować dla tych typów
     spr = d["ksef_spr"].copy()
     if "INVOICE_TYPE" in spr.columns:
-        spr = spr[~spr["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal"])].copy()
+        spr = spr[~spr["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal","Roz"])].copy()
 
     booked = set(spr["KSEF_NUMBER"].dropna()) & d["all_ksiega_r1"]
     if not booked:
@@ -751,6 +785,7 @@ CHECK_REGISTRY = {
     "amounts_vs_ksiega":      ("Sprawdzam kwoty zakupów vs KSIEGA…",    check_amounts_vs_ksiega),
     "sales_amounts":          ("Sprawdzam kwoty sprzedaży…",            check_sales_amounts),
     "sales_amounts_vs_ksiega":("Sprawdzam kwoty sprzedaży vs KSIEGA…",  check_sales_amounts_vs_ksiega),
+    "advance_invoices":       ("Sprawdzam faktury zaliczkowe/Roz…",     check_advance_invoices),
     "date_shift_purchases":   ("Sprawdzam daty zakupów…",               check_date_shift_purchases),
     "date_shift_sales":       ("Sprawdzam daty sprzedaży…",             check_date_shift_sales),
     "no_ksef_number":         ("Sprawdzam zakupy bez nr KSeF…",         check_no_ksef_number),
@@ -790,22 +825,39 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
 
     mn = d["ksef_zak"]["ISSUE_DATE"].min()
     mx = d["ksef_zak"]["ISSUE_DATE"].max()
-    # VAT okresu
-    _vat_nal = round(float(d["vat_p"]["_vat"].sum()),   2) if "_vat" in d["vat_p"].columns   else None
-    _vat_naz = round(float(d["vatsp_p"]["_vat"].sum()), 2) if (
-        d["vatsp_p"] is not None and "_vat" in d["vatsp_p"].columns) else None
+
+    def _fsum(df, cols):
+        present = [c for c in cols if c in df.columns]
+        if not present: return 0.0
+        for c in present: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+        return round(float(df[present].values.sum()), 2)
+
+    # Sumy netto za wybrany okres — do stopki porównawczej
+    _ksef_netto_zak = round(float(pd.to_numeric(d["ksef_zak"].get("NET_AMOUNT", 0), errors="coerce").fillna(0).sum()), 2)
+    _ksef_netto_spr = round(float(pd.to_numeric(d["ksef_spr"].get("NET_AMOUNT", 0), errors="coerce").fillna(0).sum()), 2)
+    _reg_netto_zak  = round(float(d["vat_p"]["_netto"].sum()), 2)   if "_netto" in d["vat_p"].columns   else 0.0
+    _reg_netto_spr  = round(float(d["vatsp_p"]["_netto"].sum()), 2) if (d["vatsp_p"] is not None and "_netto" in d["vatsp_p"].columns) else 0.0
+
+    _ks_zak = d["ksiega_p"][d["ksiega_p"]["RODZAJ"]=="2"].copy()
+    _ks_spr = d["ksiega_p"][d["ksiega_p"]["RODZAJ"]=="1"].copy()
+    _ks_netto_zak = _fsum(_ks_zak, ["ZAKUP","ZAKUP_KOSZTY","WYDATKI","WYDATKI_INNE","WYNAGRODZENIA"])
+    _ks_netto_spr = _fsum(_ks_spr, ["SPRZEDAZ","SPRZEDAZ_INNE"])
+
     summary = {
-        "ksef_total":    len(d["ksef_zak"]) + len(d["ksef_spr"]),
-        "ksef_zakup":    len(d["ksef_zak"]),
-        "ksef_sprz":     len(d["ksef_spr"]),
-        "ksiega":        len(d["ksiega_p"]),
-        "vatzakupy":     len(d["vat_p"]),
-        "vatsprzedaz":   len(d["vatsp_p"]) if d["vatsp_p"] is not None else 0,
-        "date_from":     mn.strftime("%d.%m.%Y") if pd.notna(mn) else "?",
-        "date_to":       mx.strftime("%d.%m.%Y") if pd.notna(mx) else "?",
-        "vat_naliczony": _vat_nal,
-        "vat_nalezny":   _vat_naz,
-        "vat_saldo":     round(_vat_naz - _vat_nal, 2) if (_vat_nal is not None and _vat_naz is not None) else None,
+        "ksef_total":     len(d["ksef_zak"]) + len(d["ksef_spr"]),
+        "ksef_zakup":     len(d["ksef_zak"]),
+        "ksef_sprz":      len(d["ksef_spr"]),
+        "ksiega":         len(d["ksiega_p"]),
+        "vatzakupy":      len(d["vat_p"]),
+        "vatsprzedaz":    len(d["vatsp_p"]) if d["vatsp_p"] is not None else 0,
+        "date_from":      mn.strftime("%d.%m.%Y") if pd.notna(mn) else "?",
+        "date_to":        mx.strftime("%d.%m.%Y") if pd.notna(mx) else "?",
+        "ksef_netto_zak": _ksef_netto_zak,
+        "ksef_netto_spr": _ksef_netto_spr,
+        "reg_netto_zak":  _reg_netto_zak,
+        "reg_netto_spr":  _reg_netto_spr,
+        "ks_netto_zak":   _ks_netto_zak,
+        "ks_netto_spr":   _ks_netto_spr,
     }
     errors   = sum(1 for r in results if r["kind"]=="error")
     warnings = sum(1 for r in results if r["kind"]=="warning")
