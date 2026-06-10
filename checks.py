@@ -92,6 +92,22 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     ksef_zak_all = ksef[ksef["DOCUMENT_TYPE"]=="2"].copy()
     ksef_spr_all = ksef[ksef["DOCUMENT_TYPE"]=="1"].copy()
 
+    # precompute VAT sums PRZED filtrem okresu — żeby vat_p odziedziczyło kolumny
+    vat["_netto"] = sum_cols(vat, NETTO_COLS)
+    vat["_vat"]   = sum_cols(vat, VAT_COLS)
+    vat["WARTOSC_BRUTTO"] = pd.to_numeric(vat.get("WARTOSC_BRUTTO",0), errors="coerce").fillna(0)
+    if "ZAKUP50" in vat.columns:
+        _z = vat["ZAKUP50"].astype(str).str.strip().str.upper()
+        vat["ZAKUP50"] = _z.isin(["1", "TRUE", "YES", "-1"]).astype(int)
+    else:
+        vat["ZAKUP50"] = 0
+
+    if vatsp is not None:
+        vatsp["_netto"] = sum_cols(vatsp, NETTO_COLS_SP)
+        vatsp["_vat"]   = sum_cols(vatsp, VAT_COLS_SP)
+        vatsp["SPRZEDAZ_BRUTTO"] = pd.to_numeric(
+            vatsp.get("SPRZEDAZ_BRUTTO",0), errors="coerce").fillna(0)
+
     # period filter
     if quarter and year:
         months = QUARTER_MONTHS.get(quarter, [])
@@ -133,23 +149,6 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     mn = ksef_zak["ISSUE_DATE"].min()
     mx = ksef_zak["ISSUE_DATE"].max()
     cutoff = (mx - pd.Timedelta(days=cutoff_days)) if use_cutoff and pd.notna(mx) else mx
-
-    # precompute VAT sums (done once, reused by multiple checks)
-    vat["_netto"] = sum_cols(vat, NETTO_COLS)
-    vat["_vat"]   = sum_cols(vat, VAT_COLS)
-    vat["WARTOSC_BRUTTO"] = pd.to_numeric(vat.get("WARTOSC_BRUTTO",0), errors="coerce").fillna(0)
-    # ZAKUP50 bywa boolean (True/False) lub int (1/0) – normalizuj do 0/1
-    if "ZAKUP50" in vat.columns:
-        _z = vat["ZAKUP50"].astype(str).str.strip().str.upper()
-        vat["ZAKUP50"] = _z.isin(["1", "TRUE", "YES", "-1"]).astype(int)
-    else:
-        vat["ZAKUP50"] = 0
-
-    if vatsp is not None:
-        vatsp["_netto"] = sum_cols(vatsp, NETTO_COLS_SP)
-        vatsp["_vat"]   = sum_cols(vatsp, VAT_COLS_SP)
-        vatsp["SPRZEDAZ_BRUTTO"] = pd.to_numeric(
-            vatsp.get("SPRZEDAZ_BRUTTO",0), errors="coerce").fillna(0)
 
     # lookup sets – all periods (booking can cross months)
     def ksef_set(df, col="KSEF"):
@@ -531,6 +530,54 @@ def check_duplicates_vatsp(d, cfg=None):
                    "SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)","KSEF":"Nr KSeF"})),
                explanation="Duplikat w VATSPRZEDAZ zawyży VAT należny i przychód.")
 
+def check_sales_amounts_vs_ksiega(d, cfg=None):
+    """Porównuje kwoty netto sprzedaży z KSeF z przychodem zapisanym w KSIEGA."""
+    tol = d["tol"]
+    # Faktury zaliczkowe (Zal/KorZal) są w PKPiR traktowane inaczej —
+    # przychód księgowany dopiero przy fakturze końcowej, nie przy zaliczce
+    spr = d["ksef_spr"].copy()
+    if "INVOICE_TYPE" in spr.columns:
+        spr = spr[~spr["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal"])].copy()
+
+    booked = set(spr["KSEF_NUMBER"].dropna()) & d["all_ksiega_r1"]
+    if not booked:
+        return ok("Kwoty sprzedaży KSeF vs KSIEGA: brak danych", "Brak wspólnych wpisów.")
+
+    ksef_b   = spr[spr["KSEF_NUMBER"].isin(booked)].copy()
+    ksiega_b = d["ksiega"][(d["ksiega"]["RODZAJ"]=="1") &
+                            d["ksiega"]["KSEF"].isin(booked)].copy()
+
+    sprzedaz_cols = [c for c in ["SPRZEDAZ","SPRZEDAZ_INNE"] if c in ksiega_b.columns]
+    for c in sprzedaz_cols:
+        ksiega_b[c] = pd.to_numeric(ksiega_b[c], errors="coerce").fillna(0)
+    ksiega_b["_przychod"] = ksiega_b[sprzedaz_cols].sum(axis=1) if sprzedaz_cols else 0.0
+    ksiega_agg = ksiega_b.groupby("KSEF", as_index=False).agg(_przychod=("_przychod","sum"))
+
+    m = ksef_b.merge(ksiega_agg, left_on="KSEF_NUMBER", right_on="KSEF", how="left")
+    m["_przychod"] = pd.to_numeric(m["_przychod"], errors="coerce").fillna(0)
+    m["Δ_ksiega"]  = (m["NET_AMOUNT"] - m["_przychod"]).round(2)
+    disc = m[m["Δ_ksiega"].abs() > tol].copy()
+
+    if disc.empty:
+        return ok("Kwoty sprzedaży KSeF vs KSIEGA: zgodne",
+                  f"Porównano {len(m)} faktur.",
+                  "Kwoty netto sprzedaży z KSeF zgodne z przychodem w księdze.")
+
+    invoice_col = "BUYER_NAME" if "BUYER_NAME" in disc.columns else "SELLER_NAME"
+    df = disc[["INVOICE_NUMBER", invoice_col, "NET_AMOUNT","_przychod","Δ_ksiega"]].copy()
+    if "INVOICE_TYPE" in disc.columns:
+        df["Typ"] = disc["INVOICE_TYPE"]
+    return warn(f"Niezgodności kwotowe sprzedaży (KSeF vs KSIEGA): {len(disc)}",
+                f"Suma różnic: {disc['Δ_ksiega'].abs().sum():,.2f} zł",
+                rows=rows_to_dicts(df.rename(columns={
+                    "INVOICE_NUMBER":"Nr faktury", invoice_col:"Nabywca",
+                    "NET_AMOUNT":"Netto (KSeF)","_przychod":"Przychód w KSIEGA",
+                    "Δ_ksiega":"Różnica"})),
+                explanation="Kwota netto w KSeF różni się od przychodu wpisanego w księdze. "
+                            "Dla faktur końcowych (Roz) i zwykłych (Vat) wartości powinny być zgodne. "
+                            "Faktury zaliczkowe (Zal) są pomijane — przychód ujmowany przy fakturze końcowej.")
+
+
 def check_corrections_purchases(d, cfg=None):
     # używaj okresu — ksef_zak_all obejmowałby korekty z całej historii bazy
     zak = d["ksef_zak"]
@@ -703,6 +750,7 @@ CHECK_REGISTRY = {
     "amounts_vs_vat":         ("Sprawdzam kwoty zakupów vs VAT…",       check_amounts_vs_vat),
     "amounts_vs_ksiega":      ("Sprawdzam kwoty zakupów vs KSIEGA…",    check_amounts_vs_ksiega),
     "sales_amounts":          ("Sprawdzam kwoty sprzedaży…",            check_sales_amounts),
+    "sales_amounts_vs_ksiega":("Sprawdzam kwoty sprzedaży vs KSIEGA…",  check_sales_amounts_vs_ksiega),
     "date_shift_purchases":   ("Sprawdzam daty zakupów…",               check_date_shift_purchases),
     "date_shift_sales":       ("Sprawdzam daty sprzedaży…",             check_date_shift_sales),
     "no_ksef_number":         ("Sprawdzam zakupy bez nr KSeF…",         check_no_ksef_number),

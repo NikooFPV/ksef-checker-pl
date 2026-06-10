@@ -15,6 +15,7 @@ ALL_CHECKS = [
     ("amounts_vs_vat",          True,  "Kwoty",        "Kwoty zakupów: KSeF vs VATZAKUPY"),
     ("amounts_vs_ksiega",       True,  "Kwoty",        "Kwoty zakupów: KSeF vs KSIEGA"),
     ("sales_amounts",           True,  "Kwoty",        "Kwoty sprzedaży: KSeF vs VATSPRZEDAZ"),
+    ("sales_amounts_vs_ksiega", True,  "Kwoty",        "Kwoty sprzedaży: KSeF vs KSIEGA"),
     ("date_shift_purchases",    True,  "Daty",         "Zakupy w złym miesiącu (VATZAKUPY)"),
     ("date_shift_sales",        True,  "Daty",         "Sprzedaż w złym miesiącu (VATSPRZEDAZ)"),
     ("no_ksef_number",          True,  "Jakość",       "Zakupy bez numeru KSeF"),
