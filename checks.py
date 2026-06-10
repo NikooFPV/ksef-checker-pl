@@ -742,15 +742,22 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
 
     mn = d["ksef_zak"]["ISSUE_DATE"].min()
     mx = d["ksef_zak"]["ISSUE_DATE"].max()
+    # VAT okresu
+    _vat_nal = round(float(d["vat_p"]["_vat"].sum()),   2) if "_vat" in d["vat_p"].columns   else None
+    _vat_naz = round(float(d["vatsp_p"]["_vat"].sum()), 2) if (
+        d["vatsp_p"] is not None and "_vat" in d["vatsp_p"].columns) else None
     summary = {
-        "ksef_total":  len(d["ksef_zak"]) + len(d["ksef_spr"]),
-        "ksef_zakup":  len(d["ksef_zak"]),
-        "ksef_sprz":   len(d["ksef_spr"]),
-        "ksiega":      len(d["ksiega_p"]),
-        "vatzakupy":   len(d["vat_p"]),
-        "vatsprzedaz": len(d["vatsp_p"]) if d["vatsp_p"] is not None else 0,
-        "date_from":   mn.strftime("%d.%m.%Y") if pd.notna(mn) else "?",
-        "date_to":     mx.strftime("%d.%m.%Y") if pd.notna(mx) else "?",
+        "ksef_total":    len(d["ksef_zak"]) + len(d["ksef_spr"]),
+        "ksef_zakup":    len(d["ksef_zak"]),
+        "ksef_sprz":     len(d["ksef_spr"]),
+        "ksiega":        len(d["ksiega_p"]),
+        "vatzakupy":     len(d["vat_p"]),
+        "vatsprzedaz":   len(d["vatsp_p"]) if d["vatsp_p"] is not None else 0,
+        "date_from":     mn.strftime("%d.%m.%Y") if pd.notna(mn) else "?",
+        "date_to":       mx.strftime("%d.%m.%Y") if pd.notna(mx) else "?",
+        "vat_naliczony": _vat_nal,
+        "vat_nalezny":   _vat_naz,
+        "vat_saldo":     round(_vat_naz - _vat_nal, 2) if (_vat_nal is not None and _vat_naz is not None) else None,
     }
     errors   = sum(1 for r in results if r["kind"]=="error")
     warnings = sum(1 for r in results if r["kind"]=="warning")

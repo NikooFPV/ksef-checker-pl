@@ -1104,7 +1104,7 @@ class HelpWindow(tk.Toplevel):
     # ── treść instrukcji ──────────────────────────────────────────────────────
     _SECTIONS = [
         ("Opis programu", """
-KSeF Checker to narzędzie do weryfikacji spójności danych między bazą KSeF a bazą księgową programu Insert GT (plik .mdb). Program automatycznie wykrywa rozbieżności między fakturami pobranymi z Krajowego Systemu e-Faktur a zapisami w:
+KSeF Checker to narzędzie do weryfikacji spójności danych między bazą KSeF a bazą księgową programu Mała Księgowość (plik .mdb). Program automatycznie wykrywa rozbieżności między fakturami pobranymi z Krajowego Systemu e-Faktur a zapisami w:
 
   • KSIEGA — księdze przychodów i rozchodów
   • VATZAKUPY — rejestrze VAT zakupów
@@ -1127,10 +1127,7 @@ Uwaga: Jeśli masz zainstalowany pakiet Microsoft Office (32-bit), sterownik Acc
 """),
         ("Przeprowadzenie analizy", """
 KROK 1 — Otwórz plik bazy danych
-Kliknij przycisk 📂 Otwórz plik MDB i wskaż plik bazy danych Insert GT (rozszerzenie .mdb).
-
-Plik MDB to baza danych firmy — zazwyczaj znajduje się w folderze programu Insert GT, np.:
-  C:\\Insert\\GT\\Dane\\NazwaFirmy.mdb
+Kliknij przycisk 📂 Otwórz plik MDB i wskaż plik bazy danych programu Mała Księgowość (rozszerzenie .mdb).
 
 KROK 2 — Wybierz okres analizy
 
@@ -1194,7 +1191,7 @@ Oznaczenia są zapisywane w pliku marks.json obok programu. Przypisane są do ko
 
 TYPOWY PRZEPŁYW PRACY
   1. Uruchom analizę dla miesiąca
-  2. Otwórz program Insert GT obok
+  2. Otwórz program Mała Księgowość obok
   3. W KSeF Checker oznaczaj faktury prawym klikiem w miarę ich poprawiania
   4. Po zakończeniu uruchom analizę ponownie — liczba błędów powinna spaść do zera
 """),
@@ -1283,7 +1280,7 @@ KOMPLETNOŚĆ
 
   ✗ Niezaksięgowane zakupy z KSeF
     Faktury zakupowe z KSeF bez żadnego wpisu w KSIEGA ani VATZAKUPY.
-    Co zrobić: zaksięgować fakturę w Insert GT.
+    Co zrobić: zaksięgować fakturę w Mała Księgowość.
 
   ✗ Niezaksięgowana sprzedaż z KSeF
     Faktury sprzedażowe z KSeF bez wpisu w KSIEGA lub VATSPRZEDAZ.
@@ -1386,7 +1383,7 @@ O: Zainstaluj sterownik ze strony Microsoft lub użyj instalatora
 ─────────────────────────────────────────────────────────────
 
 P: Faktura jest w KSeF ale program pokazuje ją jako niezaksięgowaną
-O: Sprawdź czy numer KSeF w Insert GT zgadza się dokładnie z numerem
+O: Sprawdź czy numer KSeF w Mała Księgowość zgadza się dokładnie z numerem
    w KSeF (bez dodatkowych spacji). Możliwa przyczyna to literówka lub
    brak numeru KSeF przy ręcznym wprowadzaniu faktury.
 
@@ -1656,16 +1653,20 @@ class InvoiceDetailPopup(tk.Toplevel):
                     arr = tk.Frame(cf, bg=BG)
                     arr.pack(side="left", padx=10, anchor="center")
                     tk.Label(arr, text="⟷", font=(_SYS,16),
-                             bg=BG, fg=TXT3).pack()
+                             bg=BG, fg=TXT3).pack(pady=(0,6))
                     if si == 1:
-                        for dk in ("Δ Brutto","Δ Netto","Δ VAT"):
+                        # kolejność zgodna z kartami: Netto → VAT → Brutto
+                        for dk in ("Δ Netto","Δ VAT","Δ Brutto"):
                             dv = delta_v.get(dk)
                             if dv is None: continue
                             bad = self._nonzero(dv)
-                            tk.Label(arr, text=dk, font=FSM,
-                                     bg=BG, fg=TXT3).pack(pady=(4,0))
-                            tk.Label(arr, text=dv, font=(_SYS,9,"bold"),
-                                     bg=BG, fg=ERR if bad else OK).pack()
+                            row = tk.Frame(arr, bg=BG)
+                            row.pack(fill="x", pady=2)
+                            tk.Label(row, text=dk, font=FSM,
+                                     bg=BG, fg=TXT3, width=8, anchor="w").pack(side="left")
+                            tk.Label(row, text=dv, font=(_SYS,9,"bold"),
+                                     bg=BG, fg=ERR if bad else OK,
+                                     anchor="e", width=9).pack(side="left")
 
                 card = tk.Frame(cf, bg=BG2,
                                 highlightbackground=color, highlightthickness=2)
@@ -1740,6 +1741,8 @@ class App(tk.Tk):
         self._active_cat = None
         self._sort_state = {}
         self._cards_anchor = None
+        self._search_text = ""
+        self._watch_mtime = None
         # ikona okna
         try:
             self._logo_img256 = _logo_photoimage(_LOGO_256)
@@ -2038,6 +2041,24 @@ class App(tk.Tk):
             _b.pack(side="left", padx=(0,3))
             self._cat_btns[_cat] = _b
 
+        # ── pasek wyszukiwania ────────────────────────────────────────────
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._on_search())
+        _sf = tk.Frame(left, bg=BG2)
+        _sf.pack(fill="x")
+        tk.Frame(left, bg=BORDER, height=1).pack(fill="x")
+        _sf_in = tk.Frame(_sf, bg=BG3, padx=4, pady=0)
+        _sf_in.pack(fill="x", padx=8, pady=6)
+        tk.Label(_sf_in, text="🔍", font=FSM, bg=BG3, fg=TXT3, padx=2).pack(side="left")
+        tk.Entry(_sf_in, textvariable=self._search_var, font=FSM,
+                 bg=BG3, fg=TXT, insertbackground=TXT,
+                 relief="flat", bd=3).pack(side="left", fill="x", expand=True)
+        self._search_clear_btn = tk.Button(_sf_in, text="✕", font=(_SYS,8),
+            bg=BG3, fg=TXT3, activebackground=BG3, activeforeground=TXT,
+            relief="flat", padx=6, cursor="hand2",
+            command=lambda: self._search_var.set(""))
+        # pokazywany tylko gdy jest tekst (zarządzane przez _on_search)
+
         left_sb = ttk.Scrollbar(left, orient="vertical")
         left_sb.pack(side="right", fill="y")
         self._left_cv = tk.Canvas(left, bg=BG, highlightthickness=0,
@@ -2156,6 +2177,67 @@ class App(tk.Tk):
             self.btn.config(state="normal")
         threading.Thread(target=self._check_updates, daemon=True).start()
 
+    # ── file watcher ─────────────────────────────────────────────────
+    def _start_file_watch(self):
+        """Śledź zmiany pliku MDB w tle i zaproponuj odświeżenie."""
+        self._stop_file_watch()
+        if not self._mdb_path or not os.path.exists(self._mdb_path):
+            return
+        try:
+            self._watch_mtime = os.path.getmtime(self._mdb_path)
+        except Exception:
+            return
+        self._watch_stop_evt = threading.Event()
+
+        def _worker(path, stop_evt, mtime_ref):
+            while not stop_evt.wait(4.0):
+                try:
+                    mt = os.path.getmtime(path)
+                    if mt != mtime_ref[0]:
+                        mtime_ref[0] = mt
+                        stop_evt.set()
+                        self.after(0, self._show_refresh_banner)
+                        break
+                except Exception:
+                    break
+
+        mtime_ref = [self._watch_mtime]
+        t = threading.Thread(target=_worker,
+                             args=(self._mdb_path, self._watch_stop_evt, mtime_ref),
+                             daemon=True)
+        t.start()
+
+    def _stop_file_watch(self):
+        if hasattr(self, "_watch_stop_evt"):
+            self._watch_stop_evt.set()
+
+    def _show_refresh_banner(self):
+        # nie pokazuj podwójnie
+        if hasattr(self, "_refresh_banner"):
+            try:
+                if self._refresh_banner.winfo_exists():
+                    return
+            except Exception:
+                pass
+        banner = tk.Frame(self._single_tab, bg="#152515")
+        # wstaw przed pierwszym dzieckiem (toolbar)
+        children = self._single_tab.winfo_children()
+        banner.pack(fill="x", before=children[0] if children else None)
+        self._refresh_banner = banner
+
+        tk.Label(banner, text="🔄  Plik bazy danych został zmieniony",
+                 font=FS, bg="#152515", fg=OK, padx=14, pady=6).pack(side="left")
+        tk.Button(banner, text="  Odśwież analizę  ", font=FSM,
+                  bg=ACCENT, fg="#18181b", activebackground="#ea6d05",
+                  relief="flat", padx=10, pady=4, cursor="hand2",
+                  command=lambda: (banner.destroy(), self._run())
+                  ).pack(side="right", padx=8, pady=6)
+        tk.Button(banner, text="✕", font=FSM,
+                  bg="#152515", fg=TXT3, activebackground="#1f3a1f",
+                  relief="flat", padx=10, pady=4, cursor="hand2",
+                  command=lambda: (banner.destroy(), self._start_file_watch())
+                  ).pack(side="right", padx=(0,4), pady=6)
+
     def _open_help(self):
         HelpWindow(self)
 
@@ -2255,6 +2337,7 @@ class App(tk.Tk):
         self.after(0, lambda: self.status_lbl.config(text=msg))
 
     def _clear_all(self):
+        self._stop_file_watch()
         for w in self.list_frame.winfo_children(): w.destroy()
         self._cards_anchor = None
         self._clear_detail()
@@ -2298,7 +2381,7 @@ class App(tk.Tk):
         s = res.get("summary",{})
         if s:
             sb = tk.Frame(self.list_frame, bg=BG)
-            sb.pack(fill="x", pady=(4,12), padx=4)
+            sb.pack(fill="x", pady=(4,6), padx=4)
             metrics = [
                 ("KSeF",     s.get("ksef_total","?"), ACCENT),
                 ("Zakupy",   s.get("ksef_zakup","?"),  A2),
@@ -2315,6 +2398,32 @@ class App(tk.Tk):
                 tk.Label(chip, text=lbl, font=(_SYS, 8),
                          bg=BG3, fg=TXT3, padx=14, pady=4).pack()
 
+            # ── VAT okresu ─────────────────────────────────────────────────
+            vat_nal = s.get("vat_naliczony")
+            vat_naz = s.get("vat_nalezny")
+            vat_sal = s.get("vat_saldo")
+            if vat_nal is not None or vat_naz is not None:
+                vb = tk.Frame(self.list_frame, bg=BG)
+                vb.pack(fill="x", padx=4, pady=(0,10))
+                tk.Label(vb, text="VAT OKRESU", font=(_SYS,7,"bold"),
+                         bg=BG, fg=TXT3, padx=2, pady=2).pack(side="left", anchor="s")
+
+                def _vat_chip(parent, lbl, val, col):
+                    if val is None: return
+                    c = tk.Frame(parent, bg=BG3)
+                    c.pack(side="left", padx=(0,6))
+                    tk.Label(c, text=f"{val:,.2f} zł", font=(FMONO,11,"bold"),
+                             bg=BG3, fg=col, padx=12, pady=5).pack()
+                    tk.Label(c, text=lbl, font=(_SYS,7),
+                             bg=BG3, fg=TXT3, padx=12, pady=3).pack()
+
+                _vat_chip(vb, "naliczony (VAT)",  vat_nal, A2)
+                _vat_chip(vb, "należny (VAT)",    vat_naz, ERR)
+                if vat_sal is not None:
+                    sal_col = ERR if vat_sal > 0 else OK
+                    sal_lbl = "do zapłaty" if vat_sal > 0 else "do zwrotu" if vat_sal < 0 else "saldo 0"
+                    _vat_chip(vb, sal_lbl, abs(vat_sal), sal_col)
+
         self._checks = res.get("checks", [])
         # reset filter + update button styles
         self._active_cat = None
@@ -2327,6 +2436,19 @@ class App(tk.Tk):
         self._cards_anchor = tk.Frame(self.list_frame, bg=BG, height=0)
         self._cards_anchor.pack()
         self._rebuild_list(auto_select=True)
+        # uruchom obserwatora pliku
+        self._start_file_watch()
+
+    def _on_search(self):
+        self._search_text = self._search_var.get().strip().lower()
+        if self._search_text:
+            self._search_clear_btn.pack(side="left")
+        else:
+            self._search_clear_btn.pack_forget()
+        self._rebuild_list(auto_select=False)
+        # odśwież prawy panel jeśli coś jest zaznaczone
+        if self._selected is not None and self._checks:
+            self._show_detail(self._checks[self._selected])
 
     def _set_cat_filter(self, cat):
         self._active_cat = cat
@@ -2352,12 +2474,22 @@ class App(tk.Tk):
         kc = {"ok":(OK,"✓"),"warning":(WARN,"⚠"),"error":(ERR,"✗")}
         _kind_cbg = {"ok": BG2, "warning": CARD_WARN, "error": CARD_ERR}
 
+        def _chk_matches_search(chk):
+            if not self._search_text: return True
+            for row in chk.get("rows", []):
+                if any(self._search_text in str(v).lower() for v in row.values()):
+                    return True
+            # szukaj też w tytule i detalu
+            return (self._search_text in chk.get("title","").lower() or
+                    self._search_text in chk.get("detail","").lower())
+
         from collections import OrderedDict
         grouped: OrderedDict = OrderedDict()
         for i, chk in enumerate(self._checks):
             cat = _CAT_MAP.get(chk.get("id",""), "Inne")
             if self._active_cat is None or cat == self._active_cat:
-                grouped.setdefault(cat, []).append((i, chk))
+                if _chk_matches_search(chk):
+                    grouped.setdefault(cat, []).append((i, chk))
 
         def _cat_rank(c): return _CAT_ORDER.index(c) if c in _CAT_ORDER else 999
         sorted_groups = sorted(grouped.items(), key=lambda x: _cat_rank(x[0]))
@@ -2384,7 +2516,13 @@ class App(tk.Tk):
 
             for i, chk in items:
                 col, icon = kc.get(chk["kind"],(TXT2,"·"))
-                n = len(chk.get("rows",[]))
+                all_rows  = chk.get("rows",[])
+                n_total   = len(all_rows)
+                if self._search_text:
+                    n = sum(1 for r in all_rows
+                            if any(self._search_text in str(v).lower() for v in r.values()))
+                else:
+                    n = n_total
                 card_bg = _kind_cbg.get(chk["kind"], BG2)
 
                 card = tk.Frame(self.list_frame, bg=BG,
@@ -2408,10 +2546,12 @@ class App(tk.Tk):
                          bg=card_bg, fg=TXT if chk["kind"]=="ok" else col,
                          anchor="w").pack(side="left", fill="x", expand=True)
 
-                if n:
+                if n_total:
                     badge_bg = col if chk["kind"]!="ok" else BG4
                     badge_fg = "#18181b" if chk["kind"]!="ok" else TXT3
-                    tk.Label(top, text=f"  {n}  ", font=(FMONO, 9, "bold"),
+                    badge_txt = (f"  {n}/{n_total}  " if self._search_text and n != n_total
+                                 else f"  {n_total}  ")
+                    tk.Label(top, text=badge_txt, font=(FMONO, 9, "bold"),
                              bg=badge_bg, fg=badge_fg).pack(side="right", padx=(6,0))
 
                 if chk.get("detail"):
@@ -2486,7 +2626,12 @@ class App(tk.Tk):
                      anchor="w", justify="left", wraplength=760,
                      padx=8, pady=7).pack(side="left", fill="x", expand=True)
 
-        rows = chk.get("rows",[])
+        rows_all = chk.get("rows",[])
+        if self._search_text:
+            rows = [r for r in rows_all
+                    if any(self._search_text in str(v).lower() for v in r.values())]
+        else:
+            rows = rows_all
         if not rows:
             tk.Label(self.tree_frame,
                      text="✓  Brak nieprawidłowości w tej kategorii.",
@@ -2519,10 +2664,15 @@ class App(tk.Tk):
         count_row = tk.Frame(self.tree_frame, bg=BG2)
         count_row.pack(fill="x", padx=8, pady=(4,4))
         tk.Label(count_row, text="Znaleziono:", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
-        tk.Label(count_row, text=f" {len(rows)} ", font=("Consolas",9,"bold"),
+        _cnt = (f" {len(rows)}/{len(rows_all)} " if self._search_text and len(rows) != len(rows_all)
+                else f" {len(rows)} ")
+        tk.Label(count_row, text=_cnt, font=("Consolas",9,"bold"),
                  bg=WARN if chk["kind"]=="warning" else (ERR if chk["kind"]=="error" else OK),
                  fg="#18181b").pack(side="left", padx=4)
         tk.Label(count_row, text="wierszy", font=(_SYS,9), bg=BG2, fg=TXT3).pack(side="left")
+        if self._search_text:
+            tk.Label(count_row, text=f"🔍 \"{self._search_var.get()}\"",
+                     font=FSM, bg=BG2, fg=ACCENT).pack(side="left", padx=(8,0))
 
         # licznik oznaczeń (aktualizowany dynamicznie)
         mark_lbl_var = tk.StringVar()

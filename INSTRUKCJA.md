@@ -24,7 +24,7 @@
 
 ## 1. Opis programu
 
-**KSeF Checker** to narzędzie do weryfikacji spójności danych między bazą KSeF a bazą księgową programu **Insert GT** (plik `.mdb`). Program automatycznie wykrywa rozbieżności między fakturami pobranymi z Krajowego Systemu e-Faktur a zapisami w:
+**KSeF Checker** to narzędzie do weryfikacji spójności danych między bazą KSeF a bazą księgową programu **Mała Księgowość** (plik `.mdb`). Program automatycznie wykrywa rozbieżności między fakturami pobranymi z Krajowego Systemu e-Faktur a zapisami w:
 
 - **KSIEGA** — księdze przychodów i rozchodów
 - **VATZAKUPY** — rejestrze VAT zakupów
@@ -97,9 +97,7 @@ Kliknij przycisk **☀️ Jasny** / **🌙 Ciemny** w prawym górnym rogu, aby p
 
 ### Krok 1 — Otwórz plik bazy danych
 
-Kliknij przycisk **📂 Otwórz plik MDB** i wskaż plik bazy danych Insert GT (rozszerzenie `.mdb`).
-
-> Plik MDB to baza danych firmy — zazwyczaj znajduje się w folderze programu Insert GT, np. `C:\Insert\GT\Dane\NazwaFirmy.mdb`
+Kliknij przycisk **📂 Otwórz plik MDB** i wskaż plik bazy danych programu Mała Księgowość (rozszerzenie `.mdb`).
 
 ### Krok 2 — Wybierz okres analizy
 
@@ -146,7 +144,7 @@ Wykrywa faktury zakupowe pobrane z KSeF, które nie mają żadnego wpisu ani w K
 
 **Dlaczego to błąd?** Faktura z KSeF, której nie ma w księgach, nie pomniejsza podatku VAT ani kosztów.
 
-**Co zrobić?** Zaksięgować fakturę w programie Insert GT.
+**Co zrobić?** Zaksięgować fakturę w programie Mała Księgowość.
 
 ---
 
@@ -410,8 +408,8 @@ Oznaczenia są zapisywane w pliku `marks.json` w folderze programu. Są przypisa
 
 **Typowy przepływ pracy:**
 1. Uruchom analizę dla miesiąca
-2. Otwórz program Insert GT obok
-3. W KSeF Checker oznaczaj faktury prawym klikiem w miarę ich poprawiania w Insert GT
+2. Otwórz program Mała Księgowość obok
+3. W KSeF Checker oznaczaj faktury prawym klikiem w miarę ich poprawiania w Mała Księgowość
 4. Po zakończeniu uruchom analizę ponownie — liczba błędów powinna spaść do zera
 
 ---
@@ -473,7 +471,7 @@ A: Zainstaluj sterownik ze strony Microsoft lub użyj instalatora z sufiksem `_z
 
 **Q: Faktura jest w KSeF ale program pokazuje ją jako niezaksięgowaną, choć ją zaksięgowałem**
 
-A: Sprawdź czy numer KSeF w Insert GT zgadza się dokładnie z numerem w KSeF (bez dodatkowych spacji). Możliwa przyczyna to literówka lub brak numeru KSeF przy ręcznym wprowadzaniu faktury.
+A: Sprawdź czy numer KSeF w Mała Księgowość zgadza się dokładnie z numerem w KSeF (bez dodatkowych spacji). Możliwa przyczyna to literówka lub brak numeru KSeF przy ręcznym wprowadzaniu faktury.
 
 ---
 
