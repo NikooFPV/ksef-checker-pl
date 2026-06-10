@@ -21,6 +21,10 @@ SetupIconFile=ksef_logo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Wymagane uprawnienia admina (potrzebne do instalacji Access Engine)
 PrivilegesRequired=admin
+; Zamknij dzialajaca aplikacje przed podmiana plikow (force = ubij gdy nie
+; odpowiada na zamkniecie) — bez tego instalator pokazuje dialog "Wybierz operacje"
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
@@ -39,8 +43,17 @@ Name: "{group}\Odinstaluj";        Filename: "{uninstallexe}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Cicha aktualizacja z aplikacji (/RELAUNCH=1) — uruchom nową wersję
+; jako zwykły użytkownik (nie admin)
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 ; Uruchom aplikację tylko przy ręcznej instalacji (nie przy cichej aktualizacji)
 Filename: "{app}\{#MyAppExeName}"; \
   Description: "Uruchom {#MyAppName}"; \
   Flags: nowait postinstall skipifsilent
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 

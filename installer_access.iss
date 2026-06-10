@@ -19,6 +19,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=ksef_logo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=admin
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
@@ -37,9 +39,15 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 
 [Run]
 Filename: "{tmp}\{#AccessEngine}"; Parameters: "/quiet /norestart"; StatusMsg: "Instaluje sterownik Microsoft Access..."; Check: AccessDriverMissing; Flags: waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 Filename: "{app}\{#MyAppExeName}"; Description: "Uruchom {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 function AccessDriverMissing: Boolean;
 var
   KeyExists: Boolean;

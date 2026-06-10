@@ -890,7 +890,9 @@ class UpdateDialog(tk.Toplevel):
                 sei.hwnd         = None
                 sei.lpVerb       = "runas"          # wymuś UAC / admin
                 sei.lpFile       = installer_path
-                sei.lpParameters = "/VERYSILENT /NORESTART"
+                # FORCECLOSEAPPLICATIONS — instalator ubije procesy blokujące pliki
+                # RELAUNCH=1 — instalator sam uruchomi nową wersję po instalacji
+                sei.lpParameters = "/VERYSILENT /NORESTART /FORCECLOSEAPPLICATIONS /RELAUNCH=1"
                 sei.lpDirectory  = None
                 sei.nShow        = 0                # SW_HIDE
                 sei.hProcess     = None
@@ -903,57 +905,27 @@ class UpdateDialog(tk.Toplevel):
                         f"(ShellExecuteEx error {err}). "
                         f"Pobierz instalator ręcznie ze strony GitHub.")
 
-                # Czekaj na zakończenie instalatora (bez limitu czasu)
-                INFINITE = 0xFFFFFFFF
-                ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, INFINITE)
                 ctypes.windll.kernel32.CloseHandle(sei.hProcess)
-
-                self.after(0, self._install_done)
+                # Zamknij aplikację OD RAZU — działający exe blokuje własny plik
+                # i instalator nie mógłby go podmienić. Nową wersję uruchomi
+                # instalator (wpis [Run] z Check: ShouldRelaunch).
+                self.after(0, self._exit_for_update)
             except Exception as e:
                 self.after(0, lambda: self._lbl.config(
                     text=f"Błąd instalacji: {e}", fg=ERR))
 
         threading.Thread(target=run, daemon=True).start()
 
-    # ── faza 3: gotowe ────────────────────────────────────────────────────
-    def _install_done(self):
+    # ── faza 3: zamknięcie na czas instalacji ─────────────────────────────
+    def _exit_for_update(self):
         self._prog.stop()
         self._prog.config(mode="determinate", value=100)
         self._lbl.config(
-            text=f"✓  KSeF Checker {self._version} został zainstalowany.", fg=OK)
-        self._btn.config(
-            state="normal",
-            text="🔄  Uruchom ponownie",
-            bg=ACCENT, fg="#18181b",
-            activebackground="#ea6d05",
-            command=self._restart)
-
-    def _restart(self):
-        """Uruchom nową wersję i zamknij obecną."""
-        import time, subprocess, winreg
-        # Znajdź ścieżkę instalacji z rejestru
-        new_exe = None
-        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            for sub in (
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KSeF Checker_is1",
-                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\KSeF Checker_is1",
-            ):
-                try:
-                    with winreg.OpenKey(root, sub) as k:
-                        path = winreg.QueryValueEx(k, "InstallLocation")[0]
-                        candidate = os.path.join(path, "KSeF_Checker.exe")
-                        if os.path.exists(candidate):
-                            new_exe = candidate
-                            break
-                except Exception:
-                    continue
-            if new_exe:
-                break
-        if new_exe:
-            time.sleep(0.3)
-            subprocess.Popen([new_exe], creationflags=subprocess.CREATE_NO_WINDOW)
-        time.sleep(0.3)
-        os._exit(0)
+            text=f"✓  Instaluję {self._version} — aplikacja uruchomi się ponownie…",
+            fg=OK)
+        # krótka chwila na pokazanie komunikatu, potem twarde wyjście
+        # (zwalnia KSeF_Checker.exe zanim instalator dojdzie do kopiowania)
+        self.after(1200, lambda: os._exit(0))
 
     def _cancel(self):
         self._cancelled = True
