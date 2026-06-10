@@ -6,6 +6,8 @@ dist/
 *.spec
 settings.json
 history.json
+marks.json
+AccessDatabaseEngine_X64.exe
 installer_output/
 *.ico
 *.gif

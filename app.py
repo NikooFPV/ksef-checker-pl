@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "2.0.1"
+VERSION     = "2.0.3"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -570,6 +570,8 @@ class BatchTab(tk.Frame):
                            self._status.config(text=m, fg=TXT2))
                 try:
                     res = analyze_mdb(path, month=month, year=year, cfg=cfg)
+                    # tryb wsadowy nie otwiera popupów — nie trzymaj DataFrame'ów w RAM
+                    res.pop("_data", None)
                     self._results.append((path, res))
                     s   = res.get("summary",{})
                     err = sum(1 for c in res["checks"] if c["kind"]=="error")
@@ -1582,13 +1584,14 @@ class InvoiceDetailPopup(tk.Toplevel):
         ("KSeF",           ["Netto (KSeF)","VAT (KSeF)","Brutto (KSeF)"],            ACCENT),
         ("Rejestr VAT",    ["Netto (VAT rej.)","VAT (VAT rej.)","Brutto (VAT rej.)"], "#3b82f6"),
         ("Rejestr sprz.",  ["Netto (rej. sp.)","VAT (rej. sp.)","Brutto (rej. sp.)"], "#8b5cf6"),
+        ("Rejestr",        ["Netto (rejestr)","VAT (rejestr)","Brutto (rejestr)"],    "#3b82f6"),
         ("Księga",         ["Kwota w KSIEGA","% kosztu"],                              "#22c55e"),
     ]
     _HDR_KEYS   = {"Nr faktury","Data wyst.","Data","Sprzedawca","Nabywca",
                    "Kontrahent","NIP","NIP (KSeF)","NIP (rejestr)","Waluta","Nr KSeF","Wystawca"}
     _DELTA_KEYS = {"Δ Netto","Δ VAT","Δ Brutto","Rodzaj błędu","Różnica"}
 
-    def __init__(self, parent, row, check_kind="error"):
+    def __init__(self, parent, row, check_kind="error", data=None):
         super().__init__(parent)
         self.configure(bg=BG)
         self.resizable(True, True)
@@ -1597,6 +1600,15 @@ class InvoiceDetailPopup(tk.Toplevel):
         self.title(f"Szczegóły — {nr}")
         self._row      = row
         self._kind_col = {"error":ERR,"warning":WARN,"ok":OK}.get(check_kind, TXT2)
+        # żywe powiązanie KSIEGA–REJESTR–KSEF (gdy dostępne dane analizy)
+        self._link = None
+        if data:
+            try:
+                from checks import lookup_invoice
+                self._link = lookup_invoice(
+                    data, row.get("Nr faktury") or row.get("NUMER") or row.get("Nr KSeF"))
+            except Exception:
+                self._link = None
         self._build()
         self.lift(); self.focus_force()
 
@@ -1631,20 +1643,35 @@ class InvoiceDetailPopup(tk.Toplevel):
 
         sub_r = tk.Frame(hdr, bg=BG2)
         sub_r.pack(fill="x", padx=14, pady=(0,10))
+        if not name and self._link and self._link.get("ksef"):
+            name = self._link["ksef"].get("kontrahent","")
         if name:
             tk.Label(sub_r, text=name, font=FS, bg=BG2, fg=TXT2).pack(side="left")
-        for k in ("NIP","NIP (KSeF)","NIP (rejestr)","Waluta","Nr KSeF"):
-            if row.get(k):
-                p = tk.Frame(sub_r, bg=BG3)
-                p.pack(side="left", padx=(6,0))
-                tk.Label(p, text=f"{k}: {row[k]}", font=FSM,
-                         bg=BG3, fg=TXT3, padx=6, pady=2).pack()
+        badges = [(k, row[k]) for k in ("NIP","NIP (KSeF)","NIP (rejestr)","Waluta","Nr KSeF")
+                  if row.get(k)]
+        if self._link:
+            TYP = {"Zal":"Zaliczkowa","KorZal":"Korekta zaliczkowej",
+                   "Roz":"Rozliczeniowa","Vat":"VAT"}
+            kf = self._link.get("ksef") or {}
+            if kf.get("typ") and not row.get("Typ"):
+                badges.append(("Typ", TYP.get(kf["typ"], kf["typ"])))
+            if kf.get("kierunek") and not row.get("Kierunek"):
+                badges.append(("Kierunek", kf["kierunek"]))
+            kn = self._link.get("ksef_nr","")
+            if kn and not row.get("Nr KSeF"):
+                badges.append(("Nr KSeF", kn if len(kn) <= 30 else kn[:14]+"…"+kn[-13:]))
+        for k, v in badges:
+            p = tk.Frame(sub_r, bg=BG3)
+            p.pack(side="left", padx=(6,0))
+            tk.Label(p, text=f"{k}: {v}", font=FSM,
+                     bg=BG3, fg=TXT3, padx=6, pady=2).pack()
 
         # ── karty źródeł danych ──────────────────────────────────────────
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True, padx=14, pady=12)
 
-        if active:
+        linked = bool(self._link) and self._build_link_cards(body)
+        if active and not linked:
             cf = tk.Frame(body, bg=BG)
             cf.pack(anchor="center")
             for si, (lbl, fields, color) in enumerate(active):
@@ -1693,7 +1720,7 @@ class InvoiceDetailPopup(tk.Toplevel):
                 tk.Frame(card, bg=BG2, height=10).pack()
 
         # ── rodzaj błędu ─────────────────────────────────────────────────
-        if delta_v.get("Rodzaj błędu") and active:
+        if delta_v.get("Rodzaj błędu") and (active or linked):
             rb = tk.Frame(body, bg=BG3)
             rb.pack(fill="x", pady=(10,0))
             tk.Label(rb, text="Rodzaj błędu:", font=FSM, bg=BG3,
@@ -1703,7 +1730,7 @@ class InvoiceDetailPopup(tk.Toplevel):
 
         # ── pozostałe pola (miesiące, MPP, NIP, daty itd.) ───────────────
         show_extra = dict(extra_v)
-        if not active:
+        if not active and not linked:
             show_extra.update(delta_v)
         if show_extra:
             ef = tk.Frame(body, bg=BG3)
@@ -1716,6 +1743,96 @@ class InvoiceDetailPopup(tk.Toplevel):
                          width=24, anchor="e", padx=8, pady=3).pack(side="left")
                 tk.Label(rf, text=v, font=(_SYS,9,"bold" if bad else "normal"),
                          bg=BG3, fg=ERR if bad else TXT, padx=4).pack(side="left")
+
+    def _build_link_cards(self, body):
+        """Karty KSIEGA – REJESTR – KSeF z żywego odczytu tabel. True gdy narysowano."""
+        lk = self._link
+        ks, rg, kf = lk.get("ksiega"), lk.get("rejestr"), lk.get("ksef")
+        if not (ks or rg or kf):
+            return False
+        TOL = 0.05
+
+        def money(v):
+            try:    return f"{float(v):,.2f}"
+            except: return "—"
+
+        ks_rows, rg_rows, kf_rows = [], [], []
+        if ks:
+            ks_rows = [("Netto", money(ks["netto"]))]
+            du = ks.get("data_ujecia") or ks.get("data")
+            if du: ks_rows.append(("Ujęcie", du))
+        if rg:
+            if rg.get("netto") is not None: rg_rows.append(("Netto", money(rg["netto"])))
+            if rg.get("vat")   is not None: rg_rows.append(("VAT",   money(rg["vat"])))
+            rg_rows.append(("Brutto", money(rg["brutto"])))
+            if rg.get("data"): rg_rows.append(("Ujęcie", rg["data"]))
+        if kf:
+            kf_rows = [("Netto", money(kf["netto"])), ("VAT", money(kf["vat"])),
+                       ("Brutto", money(kf["brutto"]))]
+            if kf.get("data"): kf_rows.append(("Wyst.", kf["data"]))
+
+        # delty między sąsiednimi kartami (obie strony muszą istnieć)
+        gap1, gap2 = [], []
+        if ks and rg and rg.get("netto") is not None:
+            gap1.append(("Δ Netto", ks["netto"] - rg["netto"]))
+        if rg and kf:
+            for lbl, key in [("Δ Netto","netto"), ("Δ VAT","vat"), ("Δ Brutto","brutto")]:
+                if rg.get(key) is not None:
+                    gap2.append((lbl, rg[key] - kf[key]))
+
+        cards = [("KSIEGA",                              "#22c55e", ks, ks_rows,
+                  (ks or {}).get("opis","")),
+                 ((rg or {}).get("zrodlo") or "REJESTR", "#3b82f6", rg, rg_rows, ""),
+                 ("KSeF",                                ACCENT,    kf, kf_rows, "")]
+
+        tk.Label(body, text="Powiązanie  KSIEGA — REJESTR VAT — KSeF",
+                 font=FSM, bg=BG, fg=TXT3).pack(anchor="w", pady=(0,6))
+        cf = tk.Frame(body, bg=BG)
+        cf.pack(anchor="center")
+
+        for i, (lbl, color, src, vrows, footer) in enumerate(cards):
+            if i > 0:
+                arr = tk.Frame(cf, bg=BG)
+                arr.pack(side="left", padx=10, anchor="center")
+                tk.Label(arr, text="⟷", font=(_SYS,16), bg=BG, fg=TXT3).pack(pady=(0,6))
+                for dk, dv in (gap1 if i == 1 else gap2):
+                    bad = abs(dv) > TOL
+                    rf = tk.Frame(arr, bg=BG)
+                    rf.pack(fill="x", pady=2)
+                    tk.Label(rf, text=dk, font=FSM, bg=BG, fg=TXT3,
+                             width=8, anchor="w").pack(side="left")
+                    tk.Label(rf, text=f"{dv:+,.2f}", font=(_SYS,9,"bold"),
+                             bg=BG, fg=ERR if bad else OK,
+                             anchor="e", width=10).pack(side="left")
+
+            bcol = color if src else BORDER
+            card = tk.Frame(cf, bg=BG2, highlightbackground=bcol, highlightthickness=2)
+            card.pack(side="left", fill="y")
+            ch = tk.Frame(card, bg=bcol)
+            ch.pack(fill="x")
+            tk.Label(ch, text=lbl, font=(_SYS,10,"bold"),
+                     bg=bcol, fg="#18181b" if src else TXT, padx=14, pady=7).pack()
+            tk.Frame(card, bg=BG2, height=6).pack()
+            if not src:
+                tk.Label(card, text="✗ brak wpisu", font=(_SYS,10,"bold"),
+                         bg=BG2, fg=ERR, padx=18, pady=14).pack()
+            else:
+                for fl, fv in vrows:
+                    rf = tk.Frame(card, bg=BG2)
+                    rf.pack(fill="x", padx=14, pady=3)
+                    tk.Label(rf, text=fl, font=FSM, bg=BG2,
+                             fg=TXT3, width=9, anchor="e").pack(side="left")
+                    tk.Label(rf, text=fv, font=(FMONO,11,"bold"),
+                             bg=BG2, fg=TXT, padx=8).pack(side="left")
+                if src.get("rows", 1) > 1:
+                    tk.Label(card, text=f"Σ z {src['rows']} wpisów", font=FSM,
+                             bg=BG2, fg=TXT3).pack(padx=14, anchor="e")
+                if footer:
+                    f = footer if len(footer) <= 38 else footer[:37] + "…"
+                    tk.Label(card, text=f, font=FSM, bg=BG2,
+                             fg=TXT3, padx=10).pack(anchor="w")
+            tk.Frame(card, bg=BG2, height=10).pack()
+        return True
 
     @staticmethod
     def _nonzero(v):
@@ -2799,7 +2916,10 @@ class App(tk.Tk):
             if not item: return
             vals = _t.item(item, "values")
             row_dict = {_c[i]: vals[i] for i in range(len(_c)) if i < len(vals)}
-            InvoiceDetailPopup(self, row_dict, check_kind=_chk["kind"])
+            # _data jest tylko po świeżej analizie (nie z historii) — wtedy popup
+            # pokazuje żywe powiązanie KSIEGA–REJESTR–KSEF
+            data = (self._last_res or {}).get("_data")
+            InvoiceDetailPopup(self, row_dict, check_kind=_chk["kind"], data=data)
         tree.bind("<Double-Button-1>", on_dbl)
 
         tk.Label(self.tree_frame,

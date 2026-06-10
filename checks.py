@@ -53,6 +53,8 @@ def warn(title, detail="", rows=None, explanation=""):
     return dict(kind="warning", title=title, detail=detail, rows=rows or [], explanation=explanation)
 
 # ── VAT column definitions ────────────────────────────────────────────────────
+KSIEGA_COST_COLS   = ["ZAKUP","ZAKUP_KOSZTY","WYDATKI","WYDATKI_INNE","WYNAGRODZENIA"]
+KSIEGA_INCOME_COLS = ["SPRZEDAZ","SPRZEDAZ_INNE"]
 NETTO_COLS    = ["NETTO23","NETTO8","NETTO5","NETTO22","NETTO7","NETTO3",
                  "NETTOZW23","NETTOZW8","NETTOZW5","ZAKUPY0"]
 VAT_COLS      = ["VAT23","VAT8","VAT5","VAT22","VAT7","VAT3","VATZW23","VATZW8","VATZW5"]
@@ -230,7 +232,12 @@ def check_missing_sales(d, cfg=None):
                explanation="Faktury sprzedażowe z KSeF bez wpisu w księdze ani rejestrze VAT sprzedaży.")
 
 def check_partial_booking(d, cfg=None):
-    zak_nums = set(d["ksef_zak"]["KSEF_NUMBER"].dropna())
+    zak = d["ksef_zak"]
+    # Zal/KorZal/Roz mają osobne sprawdzenie (check_advance_invoices) —
+    # zaliczka bywa tylko w VAT, rozliczenie tylko w KSIEGA, to nie błąd
+    if "INVOICE_TYPE" in zak.columns:
+        zak = zak[~zak["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal","Roz"])]
+    zak_nums = set(zak["KSEF_NUMBER"].dropna())
     w_k = (zak_nums & d["all_ksiega_ksef"]) - d["all_vat_ksef"]
     w_v = (zak_nums & d["all_vat_ksef"])    - d["all_ksiega_ksef"]
     if not w_k and not w_v:
@@ -257,6 +264,43 @@ def check_partial_booking(d, cfg=None):
     return err(f"Niespójność KSIEGA ↔ VATZAKUPY: {len(rows)} faktur",
                " | ".join(parts), rows=rows,
                explanation="Faktura powinna być jednocześnie w KSIEGA i VATZAKUPY. Brak w jednym miejscu = niekompletne zaksięgowanie.")
+
+def check_partial_booking_sales(d, cfg=None):
+    """Symetria do check_partial_booking — dla sprzedaży: KSIEGA ↔ VATSPRZEDAZ."""
+    spr = d["ksef_spr"]
+    # Zal/KorZal/Roz mają osobne sprawdzenie (check_advance_invoices) —
+    # zaliczka jest tylko w VAT, rozliczenie tylko w KSIEGA, to nie błąd
+    if "INVOICE_TYPE" in spr.columns:
+        spr = spr[~spr["INVOICE_TYPE"].str.strip().isin(["Zal","KorZal","Roz"])]
+    spr_nums = set(spr["KSEF_NUMBER"].dropna())
+    w_ks = (spr_nums & d["all_ksiega_r1"]) - d["all_vatsp_ksef"]   # w KSIEGA, brak w VATSPRZEDAZ
+    w_vs = (spr_nums & d["all_vatsp_ksef"]) - d["all_ksiega_r1"]   # w VATSPRZEDAZ, brak w KSIEGA
+    if not w_ks and not w_vs:
+        return ok("KSIEGA ↔ VATSPRZEDAZ (sprzedaż): spójne",
+                  f"Wszystkie wpisy sprzedaży zgodne.",
+                  "Każda faktura sprzedaży jest jednocześnie w KSIEGA i VATSPRZEDAZ.")
+    rows = []
+    for nums, problem in [(w_ks,"Jest w KSIEGA — brak w VATSPRZEDAZ"),
+                          (w_vs,"Jest w VATSPRZEDAZ — brak w KSIEGA")]:
+        for nr in nums:
+            r = d["ksef_spr"][d["ksef_spr"]["KSEF_NUMBER"]==nr]
+            if len(r):
+                ri = r.iloc[0]
+                rows.append({"Nr faktury":   str(ri["INVOICE_NUMBER"]),
+                             "Data wyst.":   str(ri["ISSUE_DATE"])[:10],
+                             "Nabywca":      str(ri.get("BUYER_NAME","")),
+                             "Netto (KSeF)": fmt(ri["NET_AMOUNT"]),
+                             "VAT (KSeF)":   fmt(ri["VAT_AMOUNT"]),
+                             "Brutto (KSeF)":fmt(ri["GROSS_AMOUNT"]),
+                             "Problem":      problem})
+    parts = []
+    if w_ks: parts.append(f"W KSIEGA bez VAT: {len(w_ks)}")
+    if w_vs: parts.append(f"W VAT bez KSIEGA: {len(w_vs)}")
+    return err(f"Niespójność KSIEGA ↔ VATSPRZEDAZ: {len(rows)} faktur",
+               " | ".join(parts), rows=rows,
+               explanation="Faktura sprzedaży powinna być jednocześnie w KSIEGA (przychód) "
+                           "i VATSPRZEDAZ (rejestr VAT). Brak w jednym miejscu = niekompletne zaksięgowanie.")
+
 
 def check_amounts_vs_vat(d, cfg=None):
     tol = d["tol"]
@@ -455,6 +499,47 @@ def check_date_shift_sales(d, cfg=None):
                     "_netto":"Netto (rej. sp.)","_vat":"VAT (rej. sp.)","SPRZEDAZ_BRUTTO":"Brutto (rej. sp.)"})),
                 explanation="Faktura sprzedaży powinna być ujęta w miesiącu daty sprzedaży/wystawienia.")
 
+def check_date_shift_purchases_ksiega(d, cfg=None):
+    """Sprawdza czy zakupy są ujęte w KSIEGA w prawidłowym miesiącu (M do M+3)."""
+    if not (d["month"] and d["year"]): return None
+    m, y = d["month"], d["year"]
+    if "DATA_UJECIA" not in d["ksiega"].columns: return None
+
+    nums = set(d["ksef_zak"]["KSEF_NUMBER"].dropna())
+    ks = d["ksiega"][(d["ksiega"]["RODZAJ"]=="2") & d["ksiega"]["KSEF"].isin(nums)].copy()
+    if ks.empty:
+        return ok("Daty ujęcia zakupów w KSIEGA: brak danych do sprawdzenia")
+
+    ks_valid = ks[ks["DATA_UJECIA"].notna()].copy()
+    if ks_valid.empty:
+        return ok("Daty ujęcia zakupów w KSIEGA: brak dat do sprawdzenia")
+
+    ksef_ym = y * 12 + m
+    ks_ym   = ks_valid["DATA_UJECIA"].dt.year * 12 + ks_valid["DATA_UJECIA"].dt.month
+    wrong_ks = ks_valid[(ks_ym < ksef_ym) | (ks_ym > ksef_ym + 3)]
+
+    if wrong_ks.empty:
+        return ok(f"Daty ujęcia zakupów w KSIEGA: prawidłowe",
+                  f"Wszystkie zakupy ujęte w {MONTHS_PL[m-1]} {y} lub w ciągu 3 kolejnych miesięcy.",
+                  "Daty ujęcia w księdze zgodne z dopuszczalnym oknem.")
+
+    # deduplikuj po KSEF (może być kilka wierszy KSIEGA dla tej samej faktury)
+    wrong_ks = wrong_ks.drop_duplicates(subset=["KSEF"])
+    merged = d["ksef_zak"].merge(
+        wrong_ks[["KSEF","DATA_UJECIA"]], left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
+    merged["Miesiąc KSeF"]   = merged["ISSUE_DATE"].dt.strftime("%m.%Y")
+    merged["Miesiąc KSIEGA"] = merged["DATA_UJECIA"].dt.strftime("%m.%Y")
+    df = merged[["INVOICE_NUMBER","SELLER_NAME","Miesiąc KSeF","Miesiąc KSIEGA",
+                 "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]].copy()
+    return warn(f"Zakupy ujęte poza oknem w KSIEGA: {len(df)}",
+                f"Wystawienie: {MONTHS_PL[m-1]} {y} → ujęcie w KSIEGA poza zakresem M..M+3",
+                rows=rows_to_dicts(df.rename(columns={
+                    "INVOICE_NUMBER":"Nr faktury","SELLER_NAME":"Sprzedawca",
+                    "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)"})),
+                explanation="Koszt powinien być ujęty w miesiącu faktury lub do 3 kolejnych miesięcy. "
+                            "Ujęcie wstecz lub po tym oknie może wpłynąć na rozliczenie PIT/CIT.")
+
+
 def check_no_ksef_number(d, cfg=None):
     vat = d["vat_p"]
     bez = vat[vat["KSEF"].isna()|(vat["KSEF"].str.strip()=="")]
@@ -470,6 +555,36 @@ def check_no_ksef_number(d, cfg=None):
         detail="Faktury ręczne, zagraniczne lub spoza KSeF.",
         rows=rows if kind=="warning" else [],
         explanation="Wysoki odsetek może oznaczać, że część faktur nie jest pobierana automatycznie z KSeF.")
+
+def check_no_ksef_number_sales(d, cfg=None):
+    """Sprzedaż w VATSPRZEDAZ bez numeru KSeF — symetria do check_no_ksef_number."""
+    if d["vatsp_p"] is None: return None
+    vatsp = d["vatsp_p"]
+    if "KSEF" not in vatsp.columns: return None
+    bez = vatsp[vatsp["KSEF"].isna()|(vatsp["KSEF"].str.strip()=="")]
+    if len(vatsp) == 0: return ok("Sprzedaż bez numeru KSeF: brak danych")
+    pct = len(bez)/len(vatsp)*100
+    thr = d["ksef_no_thr"]
+    avail = [c for c in ["NUMER","DATA_WYSTAWIENIA","FIRMA","_netto","_vat","SPRZEDAZ_BRUTTO"]
+             if c in bez.columns]
+    sample = bez[avail].head(100).copy()
+    rn = {}
+    if "NUMER"           in sample.columns: rn["NUMER"]           = "Nr faktury"
+    if "DATA_WYSTAWIENIA" in sample.columns: rn["DATA_WYSTAWIENIA"] = "Data wyst."
+    if "FIRMA"           in sample.columns: rn["FIRMA"]           = "Kontrahent"
+    if "_netto"          in sample.columns: rn["_netto"]          = "Netto (rej. sp.)"
+    if "_vat"            in sample.columns: rn["_vat"]            = "VAT (rej. sp.)"
+    if "SPRZEDAZ_BRUTTO" in sample.columns: rn["SPRZEDAZ_BRUTTO"] = "Brutto (rej. sp.)"
+    rows = rows_to_dicts(sample.rename(columns=rn))
+    kind = "warning" if pct > thr else "ok"
+    return dict(kind=kind,
+        title=f"Sprzedaż bez numeru KSeF: {len(bez)} ({pct:.1f}%)",
+        detail="Faktury ręczne, do paragonów, sprzedaż zwolniona lub spoza systemu KSeF.",
+        rows=rows if kind=="warning" else [],
+        explanation="Wysoki odsetek faktur sprzedaży bez numeru KSeF może oznaczać, "
+                    "że część obrotu nie przechodzi przez KSeF. Sprawdź czy to prawidłowe "
+                    "(kasy fiskalne, sprzedaż zwolniona) czy błąd w rejestrze.")
+
 
 def check_ksiega_only(d, cfg=None):
     ks = d["ksiega_p"]
@@ -495,6 +610,40 @@ def check_ksiega_only(d, cfg=None):
                 f"Łącznie: {total:,.2f} zł  |  Opłaty bankowe, ZUS, wynagrodzenia itp.",
                 rows=rows_to_dicts(df),
                 explanation="Wydatki w księdze bez faktury VAT: opłaty bankowe, ZUS, ubezpieczenia, amortyzacja, wynagrodzenia.")
+
+def check_ksiega_only_sales(d, cfg=None):
+    """Przychody w KSIEGA (RODZAJ=1) bez odpowiednika w VATSPRZEDAZ — symetria do check_ksiega_only."""
+    ks = d["ksiega_p"]
+    spr_ks = ks[(ks["RODZAJ"]=="1") & (ks["KSEF"].isna()|(ks["KSEF"].str.strip()==""))].copy()
+    if spr_ks.empty:
+        return ok("Przychody tylko w KSIEGA: brak",
+                  "Wszystkie wpisy przychodów mają odpowiednik w rejestrze VAT sprzedaży.",
+                  "Wszystkie wpisy sprzedaży mają odpowiednik w VATSPRZEDAZ.")
+    vatsp_numery = set()
+    if d["vatsp_p"] is not None and "NUMER" in d.get("vatsp_p", pd.DataFrame()).columns:
+        vatsp_numery = set(d["vatsp_p"]["NUMER"].dropna().str.strip())
+    tylko = spr_ks[~spr_ks["NUMER"].str.strip().isin(vatsp_numery)].copy()
+    if tylko.empty:
+        return ok("Przychody tylko w KSIEGA: brak",
+                  "Wszystkie wpisy przychodów mają odpowiednik w rejestrze VAT sprzedaży.")
+    cols_s = [c for c in ["NUMER","DATA","OPIS","FIRMA","NIP",
+                           "SPRZEDAZ","SPRZEDAZ_INNE","RAZEM_PRZYCHOD"]
+              if c in tylko.columns]
+    df = tylko[cols_s].copy()
+    for c in ["SPRZEDAZ","SPRZEDAZ_INNE","RAZEM_PRZYCHOD"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).round(2)
+    spr_cols = [c for c in ["SPRZEDAZ","SPRZEDAZ_INNE"] if c in df.columns]
+    if spr_cols:
+        df["Kwota w KSIEGA"] = df[spr_cols].sum(axis=1).round(2)
+    total = float(df["RAZEM_PRZYCHOD"].sum()) if "RAZEM_PRZYCHOD" in df.columns else 0.0
+    return warn(f"Przychody tylko w KSIEGA (bez VATSPRZEDAZ): {len(tylko)}",
+                f"Łącznie: {total:,.2f} zł  |  Rozliczenia zaliczek, sprzedaż zwolniona, inne przychody itp.",
+                rows=rows_to_dicts(df),
+                explanation="Przychody w księdze bez odpowiednika w rejestrze VAT sprzedaży — "
+                            "najczęściej rozliczenia zaliczek (VAT ujęty przy fakturze zaliczkowej), "
+                            "sprzedaż zwolniona z VAT, odsetki, inne przychody lub błąd w ujęciu.")
+
 
 def check_duplicates_vat(d, cfg=None):
     v = d["vat_p"]
@@ -546,6 +695,27 @@ def check_advance_invoices(d, cfg=None):
             continue
         sub["Kierunek"] = kierunek
         sub["Kontrahent"] = sub[name_col] if name_col in sub.columns else ""
+
+        # wartości z rejestru VAT i KSIEGI (po nr KSeF) — do porównania z KSeF
+        key = sub["KSEF_NUMBER"].astype(str).str.strip()
+        sub["_rn"] = sub["_rv"] = sub["_rb"] = sub["_kn"] = pd.NA
+        reg, bcol = ((d["vatsp"], "SPRZEDAZ_BRUTTO") if kierunek == "Sprzedaż"
+                     else (d["vat"], "WARTOSC_BRUTTO"))
+        if reg is not None and "KSEF" in reg.columns and "_netto" in reg.columns:
+            g = reg.copy()
+            g["_k"] = g["KSEF"].astype(str).str.strip()
+            g = g[g["_k"] != ""].groupby("_k")[["_netto","_vat",bcol]].sum()
+            sub["_rn"] = key.map(g["_netto"])
+            sub["_rv"] = key.map(g["_vat"])
+            sub["_rb"] = key.map(g[bcol])
+        rodzaj  = "1" if kierunek == "Sprzedaż" else "2"
+        ks_cols = KSIEGA_INCOME_COLS if kierunek == "Sprzedaż" else KSIEGA_COST_COLS
+        ksr = d["ksiega"][d["ksiega"]["RODZAJ"] == rodzaj].copy()
+        if "KSEF" in ksr.columns and len(ksr):
+            ksr["_k"]  = ksr["KSEF"].astype(str).str.strip()
+            ksr["_kn"] = sum_cols(ksr, ks_cols)
+            gk = ksr[ksr["_k"] != ""].groupby("_k")["_kn"].sum()
+            sub["_kn"] = key.map(gk)
         frames.append(sub)
 
     if not frames:
@@ -556,8 +726,12 @@ def check_advance_invoices(d, cfg=None):
     adv = pd_inner.concat(frames, ignore_index=True)
 
     cols = ["INVOICE_NUMBER","INVOICE_TYPE","Kierunek","ISSUE_DATE","Kontrahent",
-            "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]
+            "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT","_rn","_rv","_rb","_kn"]
     df = adv[[c for c in cols if c in adv.columns]].copy()
+    # brak wpisu w rejestrze/księdze → "—" (jawnie, zamiast pustej komórki)
+    for c in ["_rn","_rv","_rb","_kn"]:
+        if c in df.columns:
+            df[c] = df[c].map(lambda v: "—" if pd.isna(v) else fmt(v))
 
     total_gross = pd.to_numeric(adv["GROSS_AMOUNT"], errors="coerce").fillna(0).sum()
     n_zal = (adv["INVOICE_TYPE"].str.strip() == "Zal").sum()
@@ -579,7 +753,9 @@ def check_advance_invoices(d, cfg=None):
                     "INVOICE_NUMBER":"Nr faktury","INVOICE_TYPE":"Typ",
                     "ISSUE_DATE":"Data wyst.","Kontrahent":"Kontrahent",
                     "NET_AMOUNT":"Netto (KSeF)","VAT_AMOUNT":"VAT (KSeF)",
-                    "GROSS_AMOUNT":"Brutto (KSeF)"})),
+                    "GROSS_AMOUNT":"Brutto (KSeF)",
+                    "_rn":"Netto (rejestr)","_rv":"VAT (rejestr)",
+                    "_rb":"Brutto (rejestr)","_kn":"Kwota w KSIEGA"})),
                 explanation="Faktury zaliczkowe (Zal), korekty zaliczek (KorZal) i rozliczeniowe (Roz) "
                             "po stronie zakupów i sprzedaży — wymagają ręcznej weryfikacji w programie "
                             "księgowym. Ich ujęcie w KSIEGA i rejestrach VAT zależy od sposobu księgowania.")
@@ -802,9 +978,10 @@ def check_nip_name_inconsistency(d, cfg=None):
 
 # ── registry: id → function ───────────────────────────────────────────────────
 CHECK_REGISTRY = {
-    "missing_purchases":      ("Sprawdzam niezaksięgowane zakupy…",    check_missing_purchases),
-    "missing_sales":          ("Sprawdzam niezaksięgowaną sprzedaż…",  check_missing_sales),
-    "partial_booking":        ("Sprawdzam spójność KSIEGA↔VAT…",       check_partial_booking),
+    "missing_purchases":         ("Sprawdzam niezaksięgowane zakupy…",        check_missing_purchases),
+    "missing_sales":             ("Sprawdzam niezaksięgowaną sprzedaż…",      check_missing_sales),
+    "partial_booking":           ("Sprawdzam spójność KSIEGA↔VAT…",           check_partial_booking),
+    "partial_booking_sales":     ("Sprawdzam spójność KSIEGA↔VATSPRZEDAZ…",   check_partial_booking_sales),
     "amounts_vs_vat":         ("Sprawdzam kwoty zakupów vs VAT…",       check_amounts_vs_vat),
     "amounts_vs_ksiega":      ("Sprawdzam kwoty zakupów vs KSIEGA…",    check_amounts_vs_ksiega),
     "sales_amounts":          ("Sprawdzam kwoty sprzedaży…",            check_sales_amounts),
@@ -812,8 +989,11 @@ CHECK_REGISTRY = {
     "advance_invoices":       ("Sprawdzam faktury zaliczkowe/Roz…",     check_advance_invoices),
     "date_shift_purchases":   ("Sprawdzam daty zakupów…",               check_date_shift_purchases),
     "date_shift_sales":       ("Sprawdzam daty sprzedaży…",             check_date_shift_sales),
+    "date_shift_purchases_ksiega": ("Sprawdzam daty ujęcia w KSIEGA…",  check_date_shift_purchases_ksiega),
     "no_ksef_number":         ("Sprawdzam zakupy bez nr KSeF…",         check_no_ksef_number),
+    "no_ksef_number_sales":   ("Sprawdzam sprzedaż bez nr KSeF…",       check_no_ksef_number_sales),
     "ksiega_only":            ("Sprawdzam wpisy tylko w KSIEGA…",       check_ksiega_only),
+    "ksiega_only_sales":      ("Sprawdzam przychody tylko w KSIEGA…",   check_ksiega_only_sales),
     "duplicates_vat":         ("Sprawdzam duplikaty zakupów…",          check_duplicates_vat),
     "duplicates_vatsp":       ("Sprawdzam duplikaty sprzedaży…",        check_duplicates_vatsp),
     "corrections_purchases":  ("Sprawdzam korekty zakupów…",            check_corrections_purchases),
@@ -892,4 +1072,105 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
         period_label = f"{MONTHS_PL[month-1]} {year}"
     else:
         period_label = "Cały zakres"
-    return {"status":status, "checks":results, "summary":summary, "period": period_label}
+    return {"status":status, "checks":results, "summary":summary, "period": period_label,
+            # pełne sparsowane tabele — do żywego podglądu powiązań w popupie faktury
+            # (klucz z "_" nie trafia do history.json — save_history wybiera jawne pola)
+            "_data": {"ksef_zak": d["ksef_zak_all"], "ksef_spr": d["ksef_spr_all"],
+                      "vat": d["vat"], "vatsp": d["vatsp"], "ksiega": d["ksiega"]}}
+
+
+# ── pełne powiązanie faktury: KSIEGA ↔ REJESTR ↔ KSEF ─────────────────────────
+def lookup_invoice(data, nr):
+    """Znajdź fakturę we wszystkich trzech źródłach po numerze faktury.
+
+    data: słownik run_all()["_data"], nr: numer faktury (INVOICE_NUMBER / NUMER).
+    Zwraca dict z sekcjami ksef/rejestr/ksiega (None = brak wpisu w źródle)
+    albo None, gdy faktury nie ma nigdzie."""
+    nr = str(nr or "").strip()
+    if not nr or not data:
+        return None
+    out = {"nr": nr, "ksef_nr": "", "ksef": None, "rejestr": None, "ksiega": None}
+
+    # 1) KSeF — po numerze faktury, w obu kierunkach
+    kierunek = None
+    for df, kier, name_col in [(data.get("ksef_spr"), "Sprzedaż", "BUYER_NAME"),
+                               (data.get("ksef_zak"), "Zakup",    "SELLER_NAME")]:
+        if df is None or "INVOICE_NUMBER" not in df.columns:
+            continue
+        hit = df[df["INVOICE_NUMBER"].astype(str).str.strip() == nr]
+        if len(hit):
+            r = hit.iloc[0]
+            out["ksef_nr"] = str(r.get("KSEF_NUMBER","") or "").strip()
+            out["ksef"] = {
+                "rows":       len(hit),
+                "kierunek":   kier,
+                "typ":        str(r.get("INVOICE_TYPE","") or "").strip(),
+                "data":       str(r.get("ISSUE_DATE",""))[:10],
+                "kontrahent": str(r.get(name_col,"") or ""),
+                "netto":  float(pd.to_numeric(hit["NET_AMOUNT"],   errors="coerce").fillna(0).sum()),
+                "vat":    float(pd.to_numeric(hit["VAT_AMOUNT"],   errors="coerce").fillna(0).sum()),
+                "brutto": float(pd.to_numeric(hit["GROSS_AMOUNT"], errors="coerce").fillna(0).sum()),
+            }
+            kierunek = kier
+            break
+
+    # 2) rejestr VAT — po nr KSeF, fallback po numerze faktury
+    def _reg(df, brutto_col, date_cols, zrodlo):
+        if df is None or not len(df):
+            return None
+        m = pd.Series(False, index=df.index)
+        if out["ksef_nr"] and "KSEF" in df.columns:
+            m = df["KSEF"].astype(str).str.strip() == out["ksef_nr"]
+        if not m.any() and "NUMER" in df.columns:
+            m = df["NUMER"].astype(str).str.strip() == nr
+        hit = df[m]
+        if not len(hit):
+            return None
+        r = hit.iloc[0]
+        data_s = ""
+        for dc in date_cols:
+            if dc in hit.columns and pd.notna(r.get(dc)):
+                data_s = str(r.get(dc))[:10]; break
+        return {"rows":   len(hit),
+                "zrodlo": zrodlo,
+                "data":   data_s,
+                "firma":  str(r.get("FIRMA","") or ""),
+                "netto":  float(hit["_netto"].sum()) if "_netto" in hit.columns else None,
+                "vat":    float(hit["_vat"].sum())   if "_vat"   in hit.columns else None,
+                "brutto": (float(pd.to_numeric(hit[brutto_col], errors="coerce").fillna(0).sum())
+                           if brutto_col in hit.columns else None)}
+
+    reg_zak = lambda: _reg(data.get("vat"),   "WARTOSC_BRUTTO",  ["DATA_UJECIA","DATA_WYSTAWIENIA"],   "VATZAKUPY")
+    reg_spr = lambda: _reg(data.get("vatsp"), "SPRZEDAZ_BRUTTO", ["DATA_SPRZEDAZY","DATA_WYSTAWIENIA"], "VATSPRZEDAZ")
+    if kierunek == "Sprzedaż":
+        out["rejestr"] = reg_spr()
+    elif kierunek == "Zakup":
+        out["rejestr"] = reg_zak()
+    else:
+        out["rejestr"] = reg_zak() or reg_spr()
+
+    # 3) KSIEGA — po nr KSeF, fallback po numerze faktury
+    ks = data.get("ksiega")
+    if ks is not None and len(ks):
+        m = pd.Series(False, index=ks.index)
+        if out["ksef_nr"] and "KSEF" in ks.columns:
+            m = ks["KSEF"].astype(str).str.strip() == out["ksef_nr"]
+        if not m.any() and "NUMER" in ks.columns:
+            m = ks["NUMER"].astype(str).str.strip() == nr
+        hit = ks[m].copy()
+        if len(hit):
+            r = hit.iloc[0]
+            rodzaj = str(r.get("RODZAJ","") or "").strip()
+            cols = KSIEGA_INCOME_COLS if rodzaj == "1" else KSIEGA_COST_COLS
+            netto = float(sum_cols(hit, cols).sum())
+            du = r.get("DATA_UJECIA")
+            out["ksiega"] = {"rows":        len(hit),
+                             "rodzaj":      rodzaj,
+                             "data":        str(r.get("DATA",""))[:10],
+                             "data_ujecia": str(du)[:10] if pd.notna(du) else "",
+                             "opis":        str(r.get("OPIS","") or ""),
+                             "netto":       netto}
+
+    if not (out["ksef"] or out["rejestr"] or out["ksiega"]):
+        return None
+    return out
