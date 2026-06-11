@@ -129,6 +129,38 @@ def analyze_mdb(mdb_path, month=None, year=None, cfg=None, progress_cb=None, qua
     return run_all(ksef, ksiega, vat, vatsp, month, year,
                    cfg=cfg, prog_cb=progress_cb, quarter=quarter)
 
+def detect_latest_period(mdb_path):
+    """Najnowszy (miesiąc, rok) z POBRANYCH dokumentów KSeF.
+
+    Domyślny okres po otwarciu pliku — sensowniejszy niż bieżący miesiąc
+    kalendarzowy, który dla zamkniętego okresu bywa pusty (faktury jeszcze
+    nie pobrane z KSeF → DOWNLOADED=False → odfiltrowane). Zwraca None gdy
+    brak pobranych dokumentów."""
+    try:
+        conn = open_connection(mdb_path)
+    except Exception:
+        return None
+    try:
+        ksef = read_table(conn, "_KSEF_DOCUMENT")
+    except Exception:
+        ksef = None
+    finally:
+        conn.close()
+    if ksef is None or ksef.empty:
+        return None
+    if "DOWNLOADED" in ksef.columns:
+        dl = ksef["DOWNLOADED"].astype(str).str.strip().str.upper()
+        ksef = ksef[dl.isin(["1", "TRUE", "YES", "-1"])]
+    if ksef.empty:
+        return None
+    iss = pd.to_datetime(ksef.get("ISSUE_DATE"), errors="coerce")
+    inv = pd.to_datetime(ksef.get("INVOICING_DATE"), errors="coerce")
+    eff = inv.fillna(iss).dropna()
+    if eff.empty:
+        return None
+    mx = eff.max()
+    return (int(mx.month), int(mx.year))
+
 # ── settings window ───────────────────────────────────────────────────────────
 class SettingsWindow(tk.Toplevel):
     def __init__(self, parent, cfg, on_save, app_ref=None):
@@ -2391,6 +2423,19 @@ class App(tk.Tk):
         self.file_lbl.config(text=f"📂  {short}", fg=A2, bg=BG3)
         self.btn.config(state="normal")
         self._clear_all()
+        # auto-wybór najnowszego miesiąca z danymi (w tle — odczyt bazy)
+        def _detect(p=path):
+            per = detect_latest_period(p)
+            if per:
+                self.after(0, lambda: self._apply_detected_period(p, *per))
+        threading.Thread(target=_detect, daemon=True).start()
+
+    def _apply_detected_period(self, path, month, year):
+        if self._mdb_path != path:
+            return  # użytkownik wybrał już inny plik
+        self.month_var.set(MONTHS_PL[month-1])
+        self.year_var.set(str(year))
+        self.quarter_var.set(f"Q{(month-1)//3+1}")
 
     def _run(self):
         self.btn.config(state="disabled")
