@@ -9,6 +9,7 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings
 # Definicja wszystkich dostępnych sprawdzeń
 ALL_CHECKS = [
     # id, domyślnie włączone, kategoria, opis
+    ("pending_ksef",            True,  "Kompletność",  "Dokumenty KSeF czekające na pobranie"),
     ("missing_purchases",       True,  "Kompletność",  "Niezaksięgowane zakupy z KSeF"),
     ("missing_sales",           True,  "Kompletność",  "Niezaksięgowana sprzedaż z KSeF"),
     ("partial_booking",         True,  "Kompletność",  "Tylko w KSIEGA lub tylko w VATZAKUPY"),

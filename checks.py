@@ -79,13 +79,20 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
         vatsp = parse_dates(vatsp, ["DATA_WYSTAWIENIA","DATA_SPRZEDAZY"])
 
     # DOWNLOADED filter (handles bool True/False from pyodbc)
+    # niepobrane dokumenty przechwytujemy OSOBNO (do check_pending_ksef) —
+    # poza tym jednym sprawdzeniem są niewidoczne dla reszty logiki
+    ksef_pending = ksef.iloc[0:0].copy()
     if "DOWNLOADED" in ksef.columns:
         dl = ksef["DOWNLOADED"].astype(str).str.strip().str.upper()
-        ksef = ksef[dl.isin(["1","TRUE","YES","-1"])].copy()
+        keep = dl.isin(["1","TRUE","YES","-1"])
+        ksef_pending = ksef[~keep].copy()
+        ksef = ksef[keep].copy()
 
     # numeric amounts
     for c in ["NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]:
         ksef[c] = pd.to_numeric(ksef[c], errors="coerce")
+        if c in ksef_pending.columns:
+            ksef_pending[c] = pd.to_numeric(ksef_pending[c], errors="coerce")
 
     # normalizuj KSEF_NUMBER — Access padduje stringi spacjami
     if "KSEF_NUMBER" in ksef.columns:
@@ -166,6 +173,7 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     return dict(
         ksef_zak=ksef_zak,       ksef_spr=ksef_spr,
         ksef_zak_all=ksef_zak_all, ksef_spr_all=ksef_spr_all,
+        ksef_pending=ksef_pending,
         vat=vat,     vat_p=vat_p,
         vatsp=vatsp, vatsp_p=vatsp_p,
         ksiega=ksiega, ksiega_p=ksiega_p,
@@ -976,8 +984,57 @@ def check_nip_name_inconsistency(d, cfg=None):
                 rows=rows,
                 explanation="Ten sam NIP pod różnymi nazwami — możliwa literówka, zmiana nazwy lub błąd przy wprowadzaniu.")
 
+def check_pending_ksef(d, cfg=None):
+    """Dokumenty wystawione w KSeF, ale jeszcze nie pobrane (DOWNLOADED=False).
+
+    Niezależne od wybranego okresu — to lista „do pobrania". Te faktury są
+    odfiltrowane z całej reszty logiki, więc bez tego sprawdzenia są niewidoczne."""
+    pend = d.get("ksef_pending")
+    if pend is None or len(pend) == 0:
+        return ok("Dokumenty KSeF do pobrania: brak",
+                  "Wszystkie dokumenty z KSeF zostały pobrane do programu.",
+                  "Brak faktur oczekujących na pobranie z KSeF (wszystkie mają DOWNLOADED=True).")
+    df = pend.copy()
+    # zawęź do wybranego miesiąca (jak reszta raportu) po dacie dokumentu;
+    # kwartał i „cały zakres" pokazują wszystkie oczekujące
+    if d.get("month") and d.get("year"):
+        eff = (pd.to_datetime(df.get("INVOICING_DATE"), errors="coerce")
+                 .fillna(pd.to_datetime(df.get("ISSUE_DATE"), errors="coerce")))
+        df = df[(eff.dt.month == d["month"]) & (eff.dt.year == d["year"])].copy()
+    if len(df) == 0:
+        return ok("Dokumenty KSeF do pobrania: brak",
+                  "W wybranym okresie brak faktur oczekujących na pobranie z KSeF.",
+                  "Wszystkie dokumenty KSeF z tego okresu zostały pobrane.")
+    dt = df["DOCUMENT_TYPE"].astype(str).str.strip() if "DOCUMENT_TYPE" in df.columns else pd.Series("", index=df.index)
+    df["Kierunek"] = dt.map({"1":"Sprzedaż","2":"Zakup"}).fillna("—")
+    seller = df["SELLER_NAME"] if "SELLER_NAME" in df.columns else pd.Series("", index=df.index)
+    buyer  = df["BUYER_NAME"]  if "BUYER_NAME"  in df.columns else pd.Series("", index=df.index)
+    df["Kontrahent"] = seller.where(dt == "2", buyer)
+    df["Data wyst."] = pd.to_datetime(df.get("ISSUE_DATE"), errors="coerce").dt.strftime("%Y-%m-%d")
+
+    n_zak = int((dt == "2").sum())
+    n_spr = int((dt == "1").sum())
+    total = float(pd.to_numeric(df.get("GROSS_AMOUNT", 0), errors="coerce").fillna(0).sum())
+    cols = ["INVOICE_NUMBER","Kierunek","Data wyst.","Kontrahent",
+            "NET_AMOUNT","VAT_AMOUNT","GROSS_AMOUNT"]
+    out = df[[c for c in cols if c in df.columns]].rename(columns={
+        "INVOICE_NUMBER":"Nr faktury","NET_AMOUNT":"Netto (KSeF)",
+        "VAT_AMOUNT":"VAT (KSeF)","GROSS_AMOUNT":"Brutto (KSeF)"})
+
+    parts = []
+    if n_zak: parts.append(f"zakup: {n_zak}")
+    if n_spr: parts.append(f"sprzedaż: {n_spr}")
+    return warn(f"Dokumenty KSeF czekające na pobranie: {len(df)}",
+                "  |  ".join(parts) + f"  |  Brutto łącznie: {total:,.2f} zł",
+                rows=rows_to_dicts(out),
+                explanation="Faktury wystawione w KSeF, które nie zostały jeszcze pobrane do programu "
+                            "księgowego (DOWNLOADED=False). Pobierz je w Małej Księgowości, aby ująć "
+                            "w księdze i rejestrach VAT. Uwaga: te dokumenty NIE są uwzględniane "
+                            "w pozostałych sprawdzeniach ani w sumach — dopóki ich nie pobierzesz.")
+
 # ── registry: id → function ───────────────────────────────────────────────────
 CHECK_REGISTRY = {
+    "pending_ksef":              ("Sprawdzam dokumenty do pobrania z KSeF…",  check_pending_ksef),
     "missing_purchases":         ("Sprawdzam niezaksięgowane zakupy…",        check_missing_purchases),
     "missing_sales":             ("Sprawdzam niezaksięgowaną sprzedaż…",      check_missing_sales),
     "partial_booking":           ("Sprawdzam spójność KSIEGA↔VAT…",           check_partial_booking),
@@ -1063,15 +1120,30 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
         "ks_netto_zak":   _ks_netto_zak,
         "ks_netto_spr":   _ks_netto_spr,
     }
-    errors   = sum(1 for r in results if r["kind"]=="error")
-    warnings = sum(1 for r in results if r["kind"]=="warning")
-    status   = "error" if errors else ("warning" if warnings else "ok")
     if quarter and year:
         period_label = f"Q{quarter} {year}  ({', '.join(MONTHS_PL[m-1] for m in QUARTER_MONTHS[quarter])})"
     elif month and year:
         period_label = f"{MONTHS_PL[month-1]} {year}"
     else:
         period_label = "Cały zakres"
+
+    # Pusty okres — zamiast samych zielonych „OK" (mylące: wygląda jak „wszystko gra")
+    # pokaż jedną kartę informacyjną; zachowaj tylko listę dokumentów do pobrania.
+    period_empty = (len(d["ksef_zak"]) == 0 and len(d["ksef_spr"]) == 0
+                    and len(d["vat_p"]) == 0 and len(d["ksiega_p"]) == 0)
+    if period_empty:
+        pending = [r for r in results if r.get("id") == "pending_ksef" and r["kind"] != "ok"]
+        info = dict(kind="warning", id="empty_period", rows=[],
+            title="Brak danych w wybranym okresie",
+            detail=f"{period_label}: brak dokumentów KSeF, wpisów w księdze i rejestrach VAT.",
+            explanation="W wybranym okresie nie ma jeszcze żadnych zaksięgowanych danych. "
+                        "Jeśli spodziewasz się tu faktur, sprawdź czy zostały pobrane z KSeF "
+                        "(zob. „Dokumenty KSeF czekające na pobranie”) albo wybierz inny okres.")
+        results = [info] + pending
+
+    errors   = sum(1 for r in results if r["kind"]=="error")
+    warnings = sum(1 for r in results if r["kind"]=="warning")
+    status   = "error" if errors else ("warning" if warnings else "ok")
     return {"status":status, "checks":results, "summary":summary, "period": period_label,
             # pełne sparsowane tabele — do żywego podglądu powiązań w popupie faktury
             # (klucz z "_" nie trafia do history.json — save_history wybiera jawne pola)
