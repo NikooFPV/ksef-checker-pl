@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog
 import threading, os, sys, base64, io, webbrowser
 import pandas as pd
 
-VERSION     = "2.1.0"
+VERSION     = "2.1.1"
 GITHUB_REPO = "NikooFPV/ksef-checker-pl"
 GITHUB_API  = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_URL  = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -922,9 +922,8 @@ class UpdateDialog(tk.Toplevel):
                 sei.hwnd         = None
                 sei.lpVerb       = "runas"          # wymuś UAC / admin
                 sei.lpFile       = installer_path
-                # FORCECLOSEAPPLICATIONS — instalator ubije procesy blokujące pliki
-                # RELAUNCH=1 — instalator sam uruchomi nową wersję po instalacji
-                sei.lpParameters = "/VERYSILENT /NORESTART /FORCECLOSEAPPLICATIONS /RELAUNCH=1"
+                # instalator i tak ubija stary proces (taskkill) przed podmianą
+                sei.lpParameters = "/VERYSILENT /NORESTART"
                 sei.lpDirectory  = None
                 sei.nShow        = 0                # SW_HIDE
                 sei.hProcess     = None
@@ -939,8 +938,8 @@ class UpdateDialog(tk.Toplevel):
 
                 ctypes.windll.kernel32.CloseHandle(sei.hProcess)
                 # Zamknij aplikację OD RAZU — działający exe blokuje własny plik
-                # i instalator nie mógłby go podmienić. Nową wersję uruchomi
-                # instalator (wpis [Run] z Check: ShouldRelaunch).
+                # i instalator nie mógłby go podmienić. Po instalacji użytkownik
+                # otwiera program ponownie (ręcznie = uruchomi się bez uprawnień admina).
                 self.after(0, self._exit_for_update)
             except Exception as e:
                 self.after(0, lambda: self._lbl.config(
@@ -953,11 +952,11 @@ class UpdateDialog(tk.Toplevel):
         self._prog.stop()
         self._prog.config(mode="determinate", value=100)
         self._lbl.config(
-            text=f"✓  Instaluję {self._version} — aplikacja uruchomi się ponownie…",
+            text=f"✓  Instaluję {self._version} — za chwilę otwórz program ponownie",
             fg=OK)
         # krótka chwila na pokazanie komunikatu, potem twarde wyjście
         # (zwalnia KSeF_Checker.exe zanim instalator dojdzie do kopiowania)
-        self.after(1200, lambda: os._exit(0))
+        self.after(1500, lambda: os._exit(0))
 
     def _cancel(self):
         self._cancelled = True

@@ -1,5 +1,5 @@
 #define MyAppName      "KSeF Checker"
-#define MyAppVersion   "2.1.0"
+#define MyAppVersion   "2.1.1"
 #define MyAppPublisher "KSeF Checker"
 #define MyAppExeName   "KSeF_Checker.exe"
 #define AccessEngine   "AccessDatabaseEngine_X64.exe"
@@ -39,13 +39,18 @@ Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: 
 
 [Run]
 Filename: "{tmp}\{#AccessEngine}"; Parameters: "/quiet /norestart"; StatusMsg: "Instaluje sterownik Microsoft Access..."; Check: AccessDriverMissing; Flags: waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 Filename: "{app}\{#MyAppExeName}"; Description: "Uruchom {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function ShouldRelaunch: Boolean;
+// Twarde zamkniecie dzialajacej aplikacji PRZED kopiowaniem plikow (patrz installer.iss)
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
 begin
-  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(800);
+  Result := '';
 end;
 
 function AccessDriverMissing: Boolean;
