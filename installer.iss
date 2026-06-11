@@ -1,5 +1,5 @@
 #define MyAppName      "KSeF Checker"
-#define MyAppVersion   "2.0.3"
+#define MyAppVersion   "2.1.0"
 #define MyAppPublisher "KSeF Checker"
 #define MyAppExeName   "KSeF_Checker.exe"
 #define AccessEngine   "AccessDatabaseEngine_X64.exe"
