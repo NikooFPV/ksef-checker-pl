@@ -122,7 +122,10 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
         months = QUARTER_MONTHS.get(quarter, [])
         def in_p(s): return s.dt.month.isin(months) & (s.dt.year==year)
         ksef_zak = ksef_zak_all[in_p(ksef_zak_all["ISSUE_DATE"])].copy()
-        sd = ksef_spr_all["INVOICING_DATE"].fillna(ksef_spr_all["ISSUE_DATE"])
+        # data wystawienia (ISSUE_DATE) decyduje o okresie VAT sprzedaży — NIE
+        # INVOICING_DATE, które jest technicznym znacznikiem wysyłki do KSeF
+        # (bywa dzień później → wrzucało fakturę z końca miesiąca do następnego)
+        sd = ksef_spr_all["ISSUE_DATE"].fillna(ksef_spr_all["INVOICING_DATE"])
         ksef_spr  = ksef_spr_all[in_p(sd)].copy()
         vat_p     = vat[in_p(vat["DATA_UJECIA"])].copy()
         kd        = ksiega["DATA_UJECIA"].fillna(ksiega["DATA"])
@@ -137,7 +140,10 @@ def prepare(ksef, ksiega, vat, vatsp, month, year, cfg=None, quarter=None):
     elif month and year:
         def in_p(s): return (s.dt.month==month) & (s.dt.year==year)
         ksef_zak = ksef_zak_all[in_p(ksef_zak_all["ISSUE_DATE"])].copy()
-        sd = ksef_spr_all["INVOICING_DATE"].fillna(ksef_spr_all["ISSUE_DATE"])
+        # data wystawienia (ISSUE_DATE) decyduje o okresie VAT sprzedaży — NIE
+        # INVOICING_DATE, które jest technicznym znacznikiem wysyłki do KSeF
+        # (bywa dzień później → wrzucało fakturę z końca miesiąca do następnego)
+        sd = ksef_spr_all["ISSUE_DATE"].fillna(ksef_spr_all["INVOICING_DATE"])
         ksef_spr  = ksef_spr_all[in_p(sd)].copy()
         vat_p     = vat[in_p(vat["DATA_UJECIA"])].copy()
         kd        = ksiega["DATA_UJECIA"].fillna(ksiega["DATA"])
@@ -493,7 +499,7 @@ def check_date_shift_sales(d, cfg=None):
     merged = d["ksef_spr"].merge(
         wrong[["KSEF","_sp","_netto","_vat","SPRZEDAZ_BRUTTO"]],
         left_on="KSEF_NUMBER", right_on="KSEF", how="inner")
-    sd = merged["INVOICING_DATE"].fillna(merged["ISSUE_DATE"])
+    sd = merged["ISSUE_DATE"].fillna(merged["INVOICING_DATE"])
     merged["Miesiąc KSeF"]    = sd.dt.strftime("%m.%Y")
     merged["Miesiąc rejestr"] = merged["_sp"].dt.strftime("%m.%Y")
     df = merged[["INVOICE_NUMBER","BUYER_NAME","Miesiąc KSeF","Miesiąc rejestr",
@@ -998,8 +1004,8 @@ def check_pending_ksef(d, cfg=None):
     # zawęź do wybranego miesiąca (jak reszta raportu) po dacie dokumentu;
     # kwartał i „cały zakres" pokazują wszystkie oczekujące
     if d.get("month") and d.get("year"):
-        eff = (pd.to_datetime(df.get("INVOICING_DATE"), errors="coerce")
-                 .fillna(pd.to_datetime(df.get("ISSUE_DATE"), errors="coerce")))
+        eff = (pd.to_datetime(df.get("ISSUE_DATE"), errors="coerce")
+                 .fillna(pd.to_datetime(df.get("INVOICING_DATE"), errors="coerce")))
         df = df[(eff.dt.month == d["month"]) & (eff.dt.year == d["year"])].copy()
     if len(df) == 0:
         return ok("Dokumenty KSeF do pobrania: brak",

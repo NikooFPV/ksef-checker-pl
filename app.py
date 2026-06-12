@@ -155,7 +155,8 @@ def detect_latest_period(mdb_path):
         return None
     iss = pd.to_datetime(ksef.get("ISSUE_DATE"), errors="coerce")
     inv = pd.to_datetime(ksef.get("INVOICING_DATE"), errors="coerce")
-    eff = inv.fillna(iss).dropna()
+    # data wystawienia decyduje o okresie — INVOICING_DATE (wysyłka do KSeF) tylko fallback
+    eff = iss.fillna(inv).dropna()
     if eff.empty:
         return None
     mx = eff.max()
