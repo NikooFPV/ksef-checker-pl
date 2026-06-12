@@ -1099,14 +1099,53 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
         for c in present: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
         return round(float(df[present].values.sum()), 2)
 
-    # Sumy netto za wybrany okres — do stopki porównawczej
+    # ── WDT / WNT (wewnątrzwspólnotowe) — liczone OSOBNO ─────────────────────
+    # Bywają w walucie obcej i pojawiają się asymetrycznie (WDT: w KSeF i księdze,
+    # ale nie w _netto rejestru sprzedaży; WNT: w rejestrze zakupów i księdze, ale
+    # nie w KSeF). Mieszane w głównych sumach psułyby porównanie i bywają zawyżone
+    # przez kurs euro — więc wycinamy je z KSeF/Rejestr/Księgi i pokazujemy odrębnie.
+    vsp = d["vatsp_p"]
+    wdt_ksef_nums, wdt_numery, _wdt = set(), set(), 0.0
+    if vsp is not None and "WDT" in vsp.columns:
+        _wdtcol  = pd.to_numeric(vsp["WDT"], errors="coerce").fillna(0)
+        _wdt     = round(float(_wdtcol.sum()), 2)
+        _wdt_rows = vsp[_wdtcol != 0]
+        if "KSEF"  in _wdt_rows.columns:
+            wdt_ksef_nums = set(_wdt_rows["KSEF"].astype(str).str.strip())  - {"", "nan", "None"}
+        if "NUMER" in _wdt_rows.columns:
+            wdt_numery    = set(_wdt_rows["NUMER"].astype(str).str.strip()) - {""}
+
+    vz = d["vat_p"]
+    if "JEST_WNT" in vz.columns:
+        _is_wnt = vz["JEST_WNT"].astype(str).str.strip().str.upper().isin(["TRUE","1","-1","YES"])
+    else:
+        _is_wnt = pd.Series(False, index=vz.index)
+    _wnt       = round(float(vz[_is_wnt]["_netto"].sum()), 2) if "_netto" in vz.columns else 0.0
+    wnt_numery = (set(vz[_is_wnt]["NUMER"].astype(str).str.strip()) - {""}) if "NUMER" in vz.columns else set()
+
+    # Sumy netto KRAJOWE (bez WDT/WNT) — do stopki porównawczej
     _ksef_netto_zak = round(float(pd.to_numeric(d["ksef_zak"].get("NET_AMOUNT", 0), errors="coerce").fillna(0).sum()), 2)
-    _ksef_netto_spr = round(float(pd.to_numeric(d["ksef_spr"].get("NET_AMOUNT", 0), errors="coerce").fillna(0).sum()), 2)
-    _reg_netto_zak  = round(float(d["vat_p"]["_netto"].sum()), 2)   if "_netto" in d["vat_p"].columns   else 0.0
-    _reg_netto_spr  = round(float(d["vatsp_p"]["_netto"].sum()), 2) if (d["vatsp_p"] is not None and "_netto" in d["vatsp_p"].columns) else 0.0
+    # KSeF sprzedaż bez faktur WDT — wykluczamy po nr KSeF (odporne na walutę)
+    _spr_dom = d["ksef_spr"]
+    if wdt_ksef_nums and "KSEF_NUMBER" in _spr_dom.columns:
+        _spr_dom = _spr_dom[~_spr_dom["KSEF_NUMBER"].astype(str).str.strip().isin(wdt_ksef_nums)]
+    _ksef_netto_spr = round(float(pd.to_numeric(_spr_dom.get("NET_AMOUNT", 0), errors="coerce").fillna(0).sum()), 2)
+    # Rejestr zakupów bez WNT; rejestr sprzedaży już bez WDT (WDT to osobna kolumna)
+    _reg_netto_zak  = round(float(vz[~_is_wnt]["_netto"].sum()), 2) if "_netto" in vz.columns else 0.0
+    _reg_netto_spr  = round(float(vsp["_netto"].sum()), 2) if (vsp is not None and "_netto" in vsp.columns) else 0.0
 
     _ks_zak = d["ksiega_p"][d["ksiega_p"]["RODZAJ"]=="2"].copy()
     _ks_spr = d["ksiega_p"][d["ksiega_p"]["RODZAJ"]=="1"].copy()
+    # księga: wytnij WDT (po nr KSeF/numerze) ze sprzedaży i WNT (po numerze) z zakupów
+    if (wdt_ksef_nums or wdt_numery) and len(_ks_spr):
+        _m = pd.Series(False, index=_ks_spr.index)
+        if wdt_ksef_nums and "KSEF"  in _ks_spr.columns:
+            _m |= _ks_spr["KSEF"].astype(str).str.strip().isin(wdt_ksef_nums)
+        if wdt_numery    and "NUMER" in _ks_spr.columns:
+            _m |= _ks_spr["NUMER"].astype(str).str.strip().isin(wdt_numery)
+        _ks_spr = _ks_spr[~_m]
+    if wnt_numery and "NUMER" in _ks_zak.columns and len(_ks_zak):
+        _ks_zak = _ks_zak[~_ks_zak["NUMER"].astype(str).str.strip().isin(wnt_numery)]
     _ks_netto_zak = _fsum(_ks_zak, ["ZAKUP","ZAKUP_KOSZTY","WYDATKI","WYDATKI_INNE","WYNAGRODZENIA"])
     _ks_netto_spr = _fsum(_ks_spr, ["SPRZEDAZ","SPRZEDAZ_INNE"])
 
@@ -1125,6 +1164,8 @@ def run_all(ksef, ksiega, vat, vatsp, month, year, cfg=None, prog_cb=None, quart
         "reg_netto_spr":  _reg_netto_spr,
         "ks_netto_zak":   _ks_netto_zak,
         "ks_netto_spr":   _ks_netto_spr,
+        "wdt_netto":      _wdt,
+        "wnt_netto":      _wnt,
     }
     if quarter and year:
         period_label = f"Q{quarter} {year}  ({', '.join(MONTHS_PL[m-1] for m in QUARTER_MONTHS[quarter])})"

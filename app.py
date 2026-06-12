@@ -2601,6 +2601,23 @@ class App(tk.Tk):
                          bg=BG2, fg=row_col, width=13, anchor="e").grid(
                          row=i, column=j, padx=(0,2), sticky="e")
 
+        # ── WDT / WNT — wewnątrzwspólnotowe, liczone osobno (tylko gdy występują) ──
+        wdt, wnt = s.get("wdt_netto") or 0, s.get("wnt_netto") or 0
+        try:    has_eu = abs(float(wdt)) > 0.005 or abs(float(wnt)) > 0.005
+        except Exception: has_eu = False
+        if has_eu:
+            tk.Frame(f, bg=BORDER, height=1).pack(fill="x", padx=10)
+            eh = tk.Frame(f, bg=BG2); eh.pack(fill="x", padx=10, pady=(4,1))
+            tk.Label(eh, text="WEWNĄTRZWSPÓLNOTOWE  ·  osobno (nie wliczone wyżej)",
+                     font=(_SYS,7,"bold"), bg=BG2, fg=TXT3).pack(side="left")
+            etbl = tk.Frame(f, bg=BG2); etbl.pack(fill="x", padx=8, pady=(0,6))
+            for i, (lbl, val, col) in enumerate([("WDT · sprzedaż UE", wdt, ERR),
+                                                 ("WNT · zakup UE",    wnt, A2)]):
+                tk.Label(etbl, text=lbl, font=FSM, bg=BG2, fg=TXT3,
+                         width=20, anchor="w").grid(row=i, column=0, sticky="w")
+                tk.Label(etbl, text=_fmt(val), font=(FMONO,9), bg=BG2, fg=col,
+                         width=13, anchor="e").grid(row=i, column=1, padx=(0,2), sticky="e")
+
     def _on_search(self):
         self._search_text = self._search_var.get().strip().lower()
         if self._search_text:
